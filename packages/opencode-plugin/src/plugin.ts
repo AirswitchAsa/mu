@@ -94,14 +94,21 @@ export const server: Plugin = async () => ({
       },
     }),
 
+    renderer_list: tool({
+      description:
+        "List the window types you can create (price_chart, compare, memo, …) with each one's spec options and the data shape it requires. Call this before canvas_create so you use a valid type and spec.",
+      args: {},
+      execute: (_args, ctx) => run("renderer_list", ctx.sessionID, {}, (ok) => JSON.stringify(ok)),
+    }),
+
     canvas_create: tool({
       description:
-        "Create a typed window on the canvas (e.g. price_chart) and optionally bind a data handle. You author content (spec + bindings), never layout.",
+        "Create a typed window on the canvas (call renderer_list first to see types, e.g. price_chart) and optionally bind a data handle. You author content (spec + bindings), never layout. Toggle indicators later via canvas_update.",
       args: {
         type: z.string().describe("window type, e.g. price_chart"),
         handle: z.string().optional().describe("data handle to bind"),
         title: z.string().optional(),
-        spec: z.any().optional().describe("renderer-specific content spec"),
+        spec: z.any().optional().describe("renderer-specific content spec (see renderer_list)"),
       },
       execute: (args, ctx) =>
         run("canvas_create", ctx.sessionID, args, (ok) => {

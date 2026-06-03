@@ -3,9 +3,17 @@
 ## Description
 
 The **µ-native verb interface** — Level 1 of the two-level tool abstraction and
-the *real* agent boundary, runtime-agnostic (agent-integration.md §2). It is two
-small families of verbs: the data verbs (`!data_list`, `!data_fetch`,
-`!data_view`) and the canvas verbs (`!apply_canvas_op`, `!get_canvas_state`).
+the *real* agent boundary, runtime-agnostic (agent-integration.md §2). The
+registered verbs (as built):
+
+- **data** — `!data_list`, `!data_fetch`, `!data_view`.
+- **canvas** — the granular ops `canvas_create`, `canvas_update`, `canvas_bind`,
+  `canvas_delete`, `canvas_focus` (each a `&CanvasOp` applied through
+  `!apply_canvas_op`), plus the read `!get_canvas_state`.
+- **capability** — `renderer_list`, returning the registered
+  `&RendererManifest`s (types + spec schemas + `requiresShape`) so the agent can
+  discover window types before composing.
+
 Everything µ exposes to *any* `@Agent` is defined here; the `#OpencodePlugin` is
 Level 2, a thin binding that surfaces these verbs as opencode tools. The same
 Level-1 surface could later be wrapped in an MCP facade — a bolt-on, not the

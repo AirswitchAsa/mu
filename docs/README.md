@@ -26,6 +26,8 @@ a typed, named broker so the agent reasons over data without ever carrying it.
   the canvas plane, and the monorepo layout. Start at [spec/index.dog.md](./spec/index.dog.md),
   which also gathers the genuine open decisions. Browse with `dog get`/`dog search`/`dog serve`.
 
-**Status:** design phase, no code yet. The product framing and the data/agent contracts are
-settled; the deferred internals are now specified documentation-first under `spec/` (validated
-against DOG's lint/format gates). Open decisions are consolidated in the spec index's Notes.
+**Status:** v0 implemented. The product framing and the data/agent contracts are settled and
+specified documentation-first under `spec/` (validated against DOG's lint/format gates), and the
+backend (data plane, runtime, opencode binding, HTTP/SSE server) plus a Vite/React web client are
+built and runnable end-to-end. See [backend-api.md](./backend-api.md) for the live API; remaining
+open decisions are consolidated in the spec index's Notes.

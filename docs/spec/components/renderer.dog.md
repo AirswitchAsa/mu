@@ -7,8 +7,11 @@ A renderer turns a *validated `&Window`'s `spec`* plus its *bound data* into UI
 type it serves, the spec schema it accepts, and the `#Shape` it requires. It
 **never reasons and never touches a provider** — it binds to a *shape*, resolves
 the window's `&Handle`(s) from the `#DataBroker` server-side (`!resolve`, full
-data), and draws. The first set: price chart, indicator chart, table, memo,
-news timeline.
+data), and draws. The v0 set (registered as core in `@mu/server`): **`price_chart`**
+(OHLCV candlesticks with baked, spec-toggled SMA/EMA/volume overlays),
+**`compare`** (index-normalized multi-instrument lines), and **`memo`** (safe
+markdown, no data binding). More shapes/renderers (indicator chart, table, news
+timeline) are later work.
 
 ## State
 

@@ -17,8 +17,10 @@
     "clean": "tsc --build --clean",
     "typecheck": "tsc --build",
     "start": "node packages/server/dist/main.js",
-    "test": "vitest run",
-    "test:watch": "vitest"
+    "test": "vitest run --root .",
+    "test:watch": "vitest --root .",
+    "dev:web": "pnpm --filter @mu/web dev",
+    "build:web": "pnpm --filter @mu/web build"
   },
   "devDependencies": {
     "@types/node": "^22.10.0",

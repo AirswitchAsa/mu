@@ -2,12 +2,15 @@
 
 A session-driven generative-UI playground for financial research.
 
-You bring an agent and your own data; µ turns the agent's structured output into
-a live canvas of typed windows — price charts, indicator panels, tables, memos,
-news timelines — sitting beside the conversation that produced them.
+You bring an agent and your own data; µ turns the agent's validated tool calls into
+a live canvas of typed windows — price charts, indexed comparisons, memos — sitting
+beside the conversation that produced them.
 
-> **Status:** design complete, no code yet. See [docs/](docs/) — start with
-> [docs/overview.md](docs/overview.md). Implementation is next.
+> **Status:** v0 implemented and runnable end-to-end — a pnpm monorepo (data plane,
+> runtime, opencode binding, HTTP/SSE server) plus a Vite/React web client. See
+> [docs/](docs/) — start with [docs/overview.md](docs/overview.md) for the design,
+> and [docs/backend-api.md](docs/backend-api.md) for the API. Run it: `pnpm install
+> && pnpm build && MU_MODEL=<provider/model> pnpm start` (server) + `pnpm dev:web`.
 
 ## Principle
 

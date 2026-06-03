@@ -146,6 +146,11 @@ export async function createMuServer(opts: MuServerOptions): Promise<MuServerHan
         sendJson(res, 200, runtime.getCanvasState(id));
         return;
       }
+      // GET /api/sessions/:id/messages  (chat history, for reload-restore)
+      if (method === "GET" && seg[3] === "messages") {
+        sendJson(res, 200, { messages: runtime.sessions.require(id).messages });
+        return;
+      }
       // POST /api/sessions/:id/canvas/ops  (user layout/content edits)
       if (method === "POST" && seg[3] === "canvas" && seg[4] === "ops") {
         const { ops } = await readJson(req);
@@ -180,12 +185,14 @@ export async function createMuServer(opts: MuServerOptions): Promise<MuServerHan
     };
     const unsubscribe = runtime.subscribe(id, send);
     try {
-      const session = runtime.sessions.require(id);
-      session.messages.push({ role: "user", text, at: Date.now() });
+      // Re-`require` the session at each push: a canvas op during the turn replaces
+      // the stored SessionState (clone-then-commit), so a reference captured earlier
+      // goes stale and writes to it would be dropped from the store (lost on reload).
+      runtime.sessions.require(id).messages.push({ role: "user", text, at: Date.now() });
       // inject_canvas_state: the cheap summary rides along as an extra prompt part.
       const summary = runtime.canvasSummary(id);
       const reply = await driver.prompt(id, text, [`\n\n[µ canvas state] ${JSON.stringify(summary)}`]);
-      session.messages.push({ role: "assistant", text: reply, at: Date.now() });
+      runtime.sessions.require(id).messages.push({ role: "assistant", text: reply, at: Date.now() });
       runtime.publish(id, { type: "chat", role: "assistant", text: reply });
       runtime.publish(id, { type: "done" });
     } catch (err) {

@@ -129,6 +129,10 @@ export class ToolSurface {
         return this.dataView(args["handle"] as Handle, args["slice"] as ViewSlice | undefined);
       case "get_canvas_state":
         return this.getCanvasState(sessionId);
+      case "renderer_list":
+        // The capability catalog: window types the agent may create, their spec
+        // options, and the data shape each requires. Discovery for canvas_create.
+        return { renderers: this.deps.renderers.list() };
       case "canvas_create": {
         const { createdWindowIds, summary } = this.applyCanvasOps(
           sessionId,

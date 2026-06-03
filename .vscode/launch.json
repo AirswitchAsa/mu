@@ -1,0 +1,50 @@
+{
+  // µ end-to-end. Pick "µ end-to-end" in the Run and Debug panel (▷) to start the
+  // backend (:4000) and the web dev server (:5173) together, then open
+  // http://localhost:5173 and talk to the agent.
+  //
+  // Requires DeepSeek authed in opencode (the agent provider). Omit MU_MODEL below
+  // to run the API only (no agent; /message returns NO_DRIVER).
+  //
+  // node-terminal launches run in an integrated terminal and auto-attach the JS
+  // debugger, so breakpoints in the server's TS (dist sourcemaps) work.
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "type": "node-terminal",
+      "request": "launch",
+      "name": "µ server (:4000)",
+      "command": "pnpm build && pnpm start",
+      "cwd": "${workspaceFolder}",
+      "env": {
+        "MU_MODEL": "deepseek/deepseek-chat",
+        "PORT": "4000"
+      }
+    },
+    {
+      "type": "node-terminal",
+      "request": "launch",
+      "name": "µ web (vite :5173)",
+      "command": "pnpm dev:web",
+      "cwd": "${workspaceFolder}"
+      // The dev server defaults to API http://127.0.0.1:4000; override with
+      // "env": { "VITE_MU_API": "http://127.0.0.1:4000" } if you change PORT.
+    },
+    {
+      "type": "msedge",
+      "request": "launch",
+      "name": "µ open in browser",
+      "url": "http://localhost:5173",
+      "webRoot": "${workspaceFolder}/packages/web"
+      // Swap "type" to "chrome" if you prefer Chrome. Not in the compound below so a
+      // missing browser never blocks the servers; launch it once they're up.
+    }
+  ],
+  "compounds": [
+    {
+      "name": "µ end-to-end",
+      "configurations": ["µ server (:4000)", "µ web (vite :5173)"],
+      "stopAll": true
+    }
+  ]
+}

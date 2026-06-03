@@ -51,7 +51,36 @@ export class OpencodeDriver {
     // Only set hostname/port when provided — passing `undefined` makes the SDK
     // spawn `serve --hostname=undefined --port=0`, which fails to bind.
     const serverOpts: Parameters<typeof createOpencodeServer>[0] = {
-      config: { plugin: [getPluginPath()], model: opts.model },
+      config: {
+        plugin: [getPluginPath()],
+        model: opts.model,
+        // µ runs the agent "yolo": it drives opencode headless over the SDK, so an
+        // interactive approval prompt would only hang. Allow every gate.
+        permission: {
+          edit: "allow",
+          bash: "allow",
+          webfetch: "allow",
+          doom_loop: "allow",
+          external_directory: "allow",
+        },
+        // Confine the agent to µ's own verbs (the plugin tools). The built-in
+        // filesystem/shell tools have no role in µ and only widen the blast radius,
+        // so disable them — the agent works the canvas through µ, nothing else.
+        tools: {
+          bash: false,
+          edit: false,
+          write: false,
+          read: false,
+          glob: false,
+          grep: false,
+          list: false,
+          patch: false,
+          webfetch: false,
+          todowrite: false,
+          todoread: false,
+          task: false,
+        },
+      },
     };
     if (opts.hostname !== undefined) serverOpts.hostname = opts.hostname;
     if (opts.port !== undefined) serverOpts.port = opts.port;

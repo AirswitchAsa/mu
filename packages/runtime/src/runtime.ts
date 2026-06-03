@@ -17,7 +17,13 @@ import { ToolSurface } from "./tool-surface.js";
 
 /** Events published per session — the CQRS read projection feeding the web client. */
 export type MuEvent =
-  | { type: "canvas"; op: CanvasOp; summary: CanvasSummary }
+  // The canvas is server-authoritative: every change ships the FULL manifest
+  // (canvas state). The client diffs it against what it renders and patches —
+  // no per-update round trip, no client-side op replay. `op` rides along only as
+  // a hint for the chat ops-trace.
+  | { type: "canvas"; op: CanvasOp; state: CanvasState }
+  // A data verb the agent ran this turn — surfaced for the ops-trace, never bulk.
+  | { type: "tool"; verb: string; arg: string; ret: string }
   | { type: "chat"; role: "assistant" | "user"; text: string }
   | { type: "done" }
   | { type: "error"; error: { code?: string; message: string } };
@@ -56,7 +62,8 @@ export class MuRuntime {
       renderers,
       sessions,
       onCanvasChange: (sid, change) =>
-        this.publish(sid, { type: "canvas", op: change.op, summary: change.summary }),
+        // state is already committed (sessions.replace ran before this fires).
+        this.publish(sid, { type: "canvas", op: change.op, state: this.getCanvasState(sid) }),
     });
   }
 
@@ -80,8 +87,14 @@ export class MuRuntime {
   }
 
   // --- agent path (opencode plugin → localhost callback → here) ---
-  handleToolCall(sessionId: string, verb: string, args: Record<string, unknown>): Promise<unknown> {
-    return this.tools.invoke(sessionId, verb, args);
+  async handleToolCall(sessionId: string, verb: string, args: Record<string, unknown>): Promise<unknown> {
+    const result = await this.tools.invoke(sessionId, verb, args);
+    // Canvas verbs already publish a `canvas` event via onCanvasChange; surface the
+    // data verbs too so the chat ops-trace mirrors what the agent did (no bulk).
+    if (verb === "data_fetch" || verb === "data_view" || verb === "data_list") {
+      this.publish(sessionId, { type: "tool", ...summarizeToolCall(verb, args, result) });
+    }
+    return result;
   }
 
   // --- user path (web client canvas edits) ---
@@ -115,4 +128,28 @@ export class MuRuntime {
     this.bus.on(channel, listener);
     return () => this.bus.off(channel, listener);
   }
+}
+
+/** Condense a data verb into one ops-trace line ({arg, ret}); never carries bulk. */
+function summarizeToolCall(
+  verb: string,
+  args: Record<string, unknown>,
+  result: unknown,
+): { verb: string; arg: string; ret: string } {
+  const r = (result ?? {}) as Record<string, unknown>;
+  if (verb === "data_fetch") {
+    const entity = String(args["entity"] ?? "");
+    const res = args["resolution"] ? ` · ${String(args["resolution"])}` : "";
+    const summary = (r["summary"] ?? {}) as Record<string, unknown>;
+    const rows = summary["rowCount"];
+    return { verb, arg: `${entity}${res}`, ret: typeof rows === "number" ? `${String(r["handle"])} · ${rows} rows` : String(r["handle"] ?? "ok") };
+  }
+  if (verb === "data_view") {
+    const rows = Array.isArray(r["rows"]) ? (r["rows"] as unknown[]).length : undefined;
+    return { verb, arg: String(args["handle"] ?? ""), ret: rows !== undefined ? `${rows} rows` : "summary" };
+  }
+  // data_list
+  const datasets = Array.isArray(r["datasets"]) ? (r["datasets"] as unknown[]).length : 0;
+  const sources = Array.isArray(r["sources"]) ? (r["sources"] as unknown[]).length : 0;
+  return { verb, arg: "", ret: `${sources} sources · ${datasets} datasets` };
 }

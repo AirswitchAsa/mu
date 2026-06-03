@@ -11,29 +11,34 @@ session, sends user messages as prompts, and streams events back into the
 
 ## State
 
-- **server** — a headless **`opencode serve`** process exposing the HTTP/SSE
-  API (the chosen path; see Notes). µ connects to it as a client rather than
-  embedding opencode in-process.
+- **server** — a headless opencode server **spawned + supervised by µ via
+  `createOpencodeServer({ config })`** (config carries the `#OpencodePlugin` path,
+  the model, and the yolo `permission`/`tools` policy — see Notes). The SDK runs
+  the process; µ talks to it over the SDK client (not in-process).
 - **client** — an **@opencode-ai/sdk** client
   (`createOpencodeClient({ baseUrl })`) bound to that server.
 - **sessionMap** — µ session id ↔ opencode session id (established by
   `!bind_sessions`).
+- **model** — the `"provider/model"` string, parsed to `{ providerID, modelID }`
+  per prompt.
 
 ## Events
 
-- **start()** — connect to the `opencode serve` endpoint via
-  `createOpencodeClient({ baseUrl })`, with the `#OpencodePlugin` loaded by that
-  opencode process. (µ supervises/launches the `serve` process but talks to it
-  over the SDK, not in-process.)
+- **start()** — `createOpencodeServer({ config: { plugin, model, permission,
+  tools } })` to spawn opencode with the `#OpencodePlugin`, then
+  `createOpencodeClient({ baseUrl })` to connect. (Pass `hostname`/`port` only
+  when defined — the SDK mis-binds on `undefined`.)
 - **createSession(muSessionId)** — `client.session.create({ body })`; record the
   mapping.
-- **prompt(muSessionId, text)** — `client.session.prompt({ path: { id }, body })`
-  with `body.parts` (the user text + the appended `&CanvasSummary`) and
-  `body.model: { providerID, modelID }`. `body.format` (json_schema) is
-  available if structured output is ever needed.
-- **stream()** — consume `client.event.subscribe()` SSE
-  (`for await (const event of events.stream)`): tool traces and assistant
-  message parts route to the right µ session's chat.
+- **prompt(muSessionId, text, extraParts)** —
+  `client.session.prompt({ path: { id }, body })` with `body.parts` (the user text
+  + the appended `&CanvasSummary` via `!inject_canvas_state`) and
+  `body.model: { providerID, modelID }`. Returns the assistant's final text. The
+  canvas/data side effects the agent causes do **not** come back through this
+  return value — they flow as the agent's tool calls hit the µ tool-callback and
+  are republished on µ's own per-session bus (CQRS); the `#MuServer` SSE streams
+  them. (`body.format` json_schema is available if structured output is ever
+  needed.)
 - **deleteSession(muSessionId)** — `client.session.delete({ path: { id } })` on
   teardown.
 
@@ -47,11 +52,18 @@ session, sends user messages as prompts, and streams events back into the
   with HTTP basic auth. Pin the opencode + SDK versions; re-verify the surface
   before depending on it, as it is pre-1.0 and evolving.
   Sources: <https://opencode.ai/docs/server/>, <https://opencode.ai/docs/sdk/>.
-- **Decided — connect to `opencode serve`.** µ drives an external (µ-supervised)
-  `opencode serve` process over the SDK rather than embedding opencode via
-  `createOpencode`. This keeps the µ server runtime-agnostic (opencode runs on
-  Bun; µ need not), isolates the agent process, and matches how opencode is
-  meant to be operated headless. `OPENCODE_SERVER_PASSWORD` guards the endpoint.
+- **As built — SDK-spawned + supervised.** µ spawns and supervises opencode via
+  `createOpencodeServer({ config })` (not a separate external `opencode serve`
+  shell, and not embedded via `createOpencode`), then drives it with
+  `createOpencodeClient`. This keeps the µ server runtime-agnostic (opencode runs
+  on Bun; µ need not) and isolates the agent process.
+- **As built — yolo agent.** Because µ drives opencode headless, an interactive
+  approval prompt would only hang; the driver config sets `permission` to `allow`
+  for every gate (`edit`/`bash`/`webfetch`/`doom_loop`/`external_directory`) and
+  **disables the built-in fs/shell `tools`** (`bash`/`edit`/`write`/`read`/`glob`/
+  `grep`/`list`/`patch`/`webfetch`/`todowrite`/`todoread`/`task` → `false`) so the
+  agent is confined to µ's own verbs (the `#OpencodePlugin` tools). Tighter than
+  "yolo": the agent can touch the canvas through µ and nothing else.
 - **Open — model selection:** which provider/model the driver passes in
   `body.model` is `@Maintainer` config, not µ's choice (µ is not an agent
   framework). Proposed: a configured default with per-session override.

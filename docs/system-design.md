@@ -135,9 +135,10 @@ Dashboard-first, so the data model stays demand-driven:
 1. Build the canvas and a few real renderers against typed **mock fixtures**.
 2. Harvest the data shapes the renderers actually need; formalize them in the data contract.
 3. Build the DataBroker and resource plugins.
-4. Wire the agent (headless `opencode serve` + the `@mu/opencode-plugin`) into the loop.
+4. Wire the agent (headless opencode, SDK-spawned, + the `@mu/opencode-plugin`) into the loop.
 
-(This is sequencing, not architecture — order may flex.)
+(This is sequencing, not architecture — order may flex. **v0 is built**: all four are done,
+runnable end-to-end with a Vite/React web client.)
 
 ---
 
@@ -160,8 +161,9 @@ Dashboard-first, so the data model stays demand-driven:
 - Third-party renderer install + sandbox/trust model: **deferred** (v0 is trusted in-core only).
 
 **Agent integration — specified in [spec/](./spec/).**
-- opencode driving surface: **resolved** — connect to a µ-supervised `opencode serve` via
-  `@opencode-ai/sdk` (`createOpencodeClient`); surface verified, pre-1.0 so pin versions.
+- opencode driving surface: **built** — µ spawns/supervises opencode via
+  `@opencode-ai/sdk`'s `createOpencodeServer` and drives it with `createOpencodeClient`; the
+  agent runs yolo (permission all-allow, built-in tools off). Pinned to 1.15.x (pre-1.0).
 - Tool descriptions/examples that make the generic verbs unambiguous to the model: still to be
   tuned against a real model (a wording task, not an architecture one).
 

@@ -6,15 +6,18 @@
 adapter that surfaces µ's `#ToolSurface` verbs as opencode tools and binds
 opencode sessions to µ sessions (agent-integration.md §5). It is the *only* code
 that knows opencode exists; if opencode were swapped, this is the package that
-changes. No MCP is involved — each tool's `execute` calls straight into the
-`#MuServer` (in-process / localhost), which *is* the data-path discipline.
+changes. No MCP is involved — the plugin runs **inside opencode's process** and
+each tool's `execute` forwards over **localhost HTTP** (`MU_CALLBACK_URL` →
+`POST /internal/tool/:verb`) into the `#MuServer`, which *is* the data-path
+discipline. (It imports nothing from `@mu/*` — it reaches µ only over HTTP.)
 
 ## State
 
 - **tools** — one opencode `tool({ description, args, execute })` per
-  `#ToolSurface` verb (`data_list`, `data_fetch`, `data_view`,
-  `canvas_*`/`apply_canvas_op`, `get_canvas_state`). Definitions are
-  **stateless**; session state lives in µ.
+  `#ToolSurface` verb: `data_list`, `data_fetch`, `data_view`, `renderer_list`,
+  `canvas_create`, `canvas_update`, `canvas_bind`, `canvas_delete`,
+  `canvas_focus`, `get_canvas_state`. Definitions are **stateless**; session state
+  lives in µ.
 - **sessionMap** — the µ ↔ opencode session mapping maintained by
   `!bind_sessions` (a session-keyed Map, the documented opencode pattern).
 

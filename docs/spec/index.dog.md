@@ -23,8 +23,11 @@ per-kind merge, `!data_view`'s slice + bulk guard); the resource/plugin contract
 `&RendererManifest`, `!register_renderer`, `!auto_layout`); and the monorepo
 `&PackageLayout`.
 
-No implementation exists yet — this is documentation-first. Concrete `#Shape`
-record schemas are v0/provisional (shapes.md) and refine as renderers are built.
+The v0 implementation now exists and is downstream of this model: a pnpm-workspace
+monorepo (`&PackageLayout`) realizing the data plane, runtime, opencode binding, and
+HTTP/SSE server, plus a Vite/React `#WebClient`. Where code and spec have diverged,
+the divergences are noted on the relevant primitive. Concrete `#Shape` record schemas
+are v0/provisional (shapes.md) and refine as renderers are built.
 
 ## Actors
 
@@ -121,19 +124,22 @@ record schemas are v0/provisional (shapes.md) and refine as renderers are built.
   doesn't care, and the agent picks from `!data_list` when it does.
 - **Acquisition failures** (`#AcquisitionCoordinator`) — **typed errors**
   (`{ code, message }`) in the tool result; never raw vendor errors in context.
-- **opencode driving** (`#OpencodeDriver`) — connect to an external,
-  µ-supervised **`opencode serve`** via `createOpencodeClient` (not embedded);
-  keeps the µ server runtime-agnostic. Surface verified against the June 2026
-  docs; pin versions and re-verify (pre-1.0).
+- **opencode driving** (`#OpencodeDriver`) — µ supervises opencode via the SDK:
+  `createOpencodeServer({config})` spawns it (plugin + model + yolo config) and
+  `createOpencodeClient` connects; keeps the µ server runtime-agnostic. The agent
+  is run **yolo** — `permission` all-`allow` (headless, no approver) and the
+  built-in fs/shell `tools` disabled so it is confined to µ's verbs. Pinned to
+  opencode 1.15.x (pre-1.0 surface; re-verify on bump).
 - **Renderers** (`!register_renderer`) — v0 ships **trusted, in-core renderers
   only**, built on **Lightweight Charts**; no third-party renderer surface and
   therefore **no sandbox/trust model designed for v0** (later work).
 - **Auto-layout** (`!auto_layout`) — decided: **infinite scroll-down** canvas;
   row-major gap-fill, per-type default sizes, sticky manual placement, no reflow
   of pinned windows.
-- **Monorepo tooling** (`&PackageLayout`) — decided: pnpm workspaces + Turborepo
-  + TS project references (`tsc`/`tsup`) + Vite for the web app; µ server on
-  Node, opencode driven over the SDK.
+- **Monorepo tooling** (`&PackageLayout`) — pnpm workspaces + TS project
+  references (`tsc`) for the backend, with Vitest for tests; Vite owns the web app
+  (its own build, outside the root `tsc` graph). No Turborepo. µ server on Node,
+  opencode driven over the SDK.
 - **`metric` identity** (`#Shape`, shapes.md) — decided: `entity` = the subject
   the number is about, `metricId` = which quantity — one rule for equity
   (`AMZN`/`realized_vol_20d`) and macro (`CPIAUCSL`/`level`), no macro

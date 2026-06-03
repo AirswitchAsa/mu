@@ -21,29 +21,33 @@ to components/data defined in these specs.
 - **@mu/resource-sdk** — the thin `#Resource` author surface
   (`&ResourceManifest` + `fetch` → `&FetchResult`), plus `#ResourceRegistry`,
   `#AcquisitionCoordinator`, `#CadenceScheduler`. Depends on @mu/protocol.
-- **@mu/renderer-sdk** — the `#Renderer` author surface (`&RendererManifest` +
-  the spec-in/handle-in → UI contract) and the base **Lightweight Charts**
-  primitives. Frontend-side; depends on @mu/protocol.
-- **@mu/runtime** — the `#MuServer`, `#SessionStore`, `#Canvas`, `#ToolSurface`,
-  and `!apply_canvas_op` / `!inject_canvas_state` / `!get_canvas_state`. Wires
-  broker + resources + sessions together. The in-process plugin host.
+- **@mu/runtime** — the `#MuServer` (`#MuRuntime`), `#SessionStore`, `#Canvas`,
+  `#RendererRegistry`, `#ToolSurface`, and `!apply_canvas_op` /
+  `!inject_canvas_state` / `!get_canvas_state`. Wires broker + resources +
+  sessions together with a per-session event bus. The in-process plugin host.
 - **@mu/opencode-plugin** — the `#OpencodePlugin` + `#OpencodeDriver`: the
   opencode binding (custom tools, `!bind_sessions`) over @opencode-ai/plugin and
   @opencode-ai/sdk. The *only* package that knows opencode exists.
-- **@mu/web** — the `#WebClient`: grid canvas, chat panel, `#RendererRegistry`,
-  `!auto_layout`. Depends on @mu/renderer-sdk + @mu/protocol.
-- **@mu/server** — the composition root / entrypoint: boots `#MuServer`, loads
-  resource & renderer plugins, serves @mu/web, drives opencode. The Docker
-  image's main.
+- **@mu/server** — the composition root / entrypoint: boots `#MuRuntime`, loads
+  resource plugins, **registers the core `&RendererManifest`s + spec validators**
+  (`core-renderers.ts`: `price_chart`, `compare`, `memo`), serves @mu/web, drives
+  opencode. The Docker image's main.
+- **@mu/web** — the `#WebClient`: grid canvas, chat panel, session rail, and the
+  client-side renderer plugins (`src/renderers/*`, glob-registered by `type`,
+  built on **Lightweight Charts**). Depends on @mu/protocol. *(The originally
+  planned `@mu/renderer-sdk` was folded in: the authoritative manifests/validators
+  live in @mu/server and the draw-code plugins live here.)*
 
 ## Notes
 
-- **Tooling (decided):** **pnpm workspaces** for the monorepo, **Turborepo** for
-  the task graph, **TypeScript project references** with `tsc`/`tsup` for library
-  builds, and **Vite** for the @mu/web app. The µ server targets **Node**;
-  opencode runs on Bun but the `#OpencodeDriver` talks to it over the SDK (HTTP)
-  via `opencode serve`, so µ's runtime stays decoupled from opencode's. (Revisit
-  only if a deployment constraint demands it.)
+- **Tooling (as built):** **pnpm workspaces** for the monorepo, **TypeScript
+  project references** with `tsc` for the backend library builds, **Vitest** for
+  tests, and **Vite** for the @mu/web app (its own build, outside the root `tsc`
+  graph). No Turborepo. The µ server targets **Node**; the `#OpencodeDriver`
+  spawns + supervises opencode via the SDK (`createOpencodeServer`) and talks to
+  it over the SDK client, so µ's runtime stays decoupled from opencode's.
+- **Spike package:** `@mu/opencode-spike` is a throwaway kept only for its
+  opencode-integration stress test; it is not part of the dependency graph above.
 - **In-process vs. worker plugins (v0):** `#Resource`/`#Renderer` plugins are
   trusted in-process code in v0. A worker/host-boundary variant is later work; the
   SDK surfaces are shaped to permit it without changing author code.

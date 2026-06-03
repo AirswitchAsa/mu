@@ -83,15 +83,19 @@ the payload.
 ## 5. Driving opencode
 
 Because µ owns the frontend (its own chat + canvas), the user is not sitting in opencode's
-TUI. So **µ drives a headless `opencode serve`** programmatically: it connects with
-`@opencode-ai/sdk` via `createOpencodeClient({ baseUrl })`, with the `@mu/opencode-plugin`
-loaded. One **µ session ↔ one opencode session**.
+TUI. So **µ drives a headless opencode** programmatically: the `#OpencodeDriver` spawns and
+supervises it with `@opencode-ai/sdk`'s `createOpencodeServer({ config })` (config = the
+`@mu/opencode-plugin` path, the model, and the yolo permission/tools policy) and connects with
+`createOpencodeClient({ baseUrl })`. One **µ session ↔ one opencode session**.
 
-> **Resolved (verified June 2026):** µ connects to a µ-supervised external `opencode serve`
-> (rather than embedding via `createOpencode`), keeping the µ server runtime-agnostic. Surface:
-> `createOpencodeClient` · `client.session.create/prompt/delete` (prompt body: `parts` / `model`
-> / `noReply` / `format`) · `client.event.subscribe()` SSE. opencode is pre-1.0 — pin versions
-> and re-verify. Full detail in [spec/](./spec/components/opencode-driver.dog.md).
+> **As built (opencode 1.15.x):** µ supervises opencode via `createOpencodeServer` (SDK-spawned,
+> not a separate external shell and not embedded via `createOpencode`), keeping the µ server
+> runtime-agnostic. The agent runs **yolo** — `permission` all-`allow` and the built-in fs/shell
+> `tools` disabled, confining it to µ's verbs. Surface: `createOpencodeClient` ·
+> `client.session.create/prompt/delete` (prompt body: `parts` / `model` / `format`). `prompt`
+> returns the assistant text; canvas/data effects flow via the plugin's tool callbacks onto µ's
+> own event bus (CQRS), not opencode's event stream. opencode is pre-1.0 — pin versions and
+> re-verify. Full detail in [spec/](./spec/components/opencode-driver.dog.md).
 
 ### The `@mu/opencode-plugin`
 
@@ -131,8 +135,9 @@ from acting on a stale model.
 ## 7. Status
 
 The boundary is now specified in [spec/](./spec/):
-- opencode driving surface: **resolved** — external `opencode serve` over the SDK (see above).
-- Canvas verb signatures: **specified** — `apply_canvas_op` + the `canvas_*` set
-  ([spec](./spec/behaviors/apply-canvas-op.dog.md)).
+- opencode driving surface: **built** — SDK-spawned via `createOpencodeServer`, agent run yolo
+  (see above).
+- Canvas verb signatures: **built** — `apply_canvas_op` + the granular `canvas_*` set, plus
+  `renderer_list` ([spec](./spec/behaviors/apply-canvas-op.dog.md)).
 - Still owed (a tuning task, not architecture): tool descriptions/examples good enough that the
   generic verbs are unambiguous to the model.

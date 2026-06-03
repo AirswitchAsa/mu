@@ -33,11 +33,16 @@ with `code` from the typed set (`VALIDATION_FAILED`, `HANDLE_NOT_FOUND`,
 | Method | Path | Body | Returns |
 |---|---|---|---|
 | `GET` | `/api/sessions/:id/canvas` | — | `CanvasState`: `{ id, windows[], layout, focusedWindowId? }` |
+| `GET` | `/api/sessions/:id/messages` | — | `{ messages: ChatMessage[] }` — chat history for reload-restore (`{ role, text, at }`) |
 | `POST` | `/api/sessions/:id/canvas/ops` | `{ ops: CanvasOp[] }` | `{ summary }` — **user** ops (incl. `move`/`resize`) |
 
 `Window`: `{ id, type, title, spec, bindings: Handle[], provenanceRefs }`.
 `layout[windowId]`: `{ col, row, colSpan, rowSpan, pinned }`. The user owns layout;
 agent ops that try `move`/`resize` are rejected.
+
+> Session state (canvas + messages) is **in-memory** in v0: it survives a browser
+> reload (re-fetch canvas + messages) but **not a server restart**. The web client
+> maps its own localStorage session list onto live ids and re-creates a stale id.
 
 ## Message (SSE)
 
@@ -49,15 +54,22 @@ Content-Type: text/event-stream
 Each line is `data: <json>`. Event shapes:
 
 ```jsonc
-{ "type": "canvas", "op": <CanvasOp>, "summary": <CanvasSummary> }  // streamed live as the agent edits
-{ "type": "chat", "role": "assistant", "text": "..." }             // assistant reply (turn end)
-{ "type": "done" }                                                  // turn complete — stop reading
+{ "type": "canvas", "op": <CanvasOp>, "state": <CanvasState> }  // FULL manifest, streamed live as the agent edits
+{ "type": "tool", "verb": "data_fetch", "arg": "AMZN · 1d", "ret": "yfinance:ohlcv:AMZN:1d · 252 rows" }  // a data verb the agent ran
+{ "type": "chat", "role": "assistant", "text": "..." }          // assistant reply (turn end)
+{ "type": "done" }                                               // turn complete — stop reading
 { "type": "error", "error": { "code", "message" } }
 ```
 
-The agent drives the canvas by calling tools (not structured output); each applied
-op arrives as a `canvas` event while the turn runs. The cheap canvas summary is
-auto-injected into every turn, so the agent stays aware of the current canvas.
+The agent drives the canvas by calling tools (not structured output). **The canvas
+is server-authoritative**: every change emits a `canvas` event carrying the *full*
+`CanvasState` (the playground manifest). The client keeps the last manifest, diffs
+the new one against it, and patches only what changed — windows added/removed,
+specs updated, bindings rebound — so an unchanged binding never re-resolves. `op`
+rides along only as a hint for the chat ops-trace. `tool` events surface the data
+verbs (`data_fetch`/`data_view`/`data_list`) for that same trace; they never carry
+bulk. The cheap canvas summary is auto-injected into every turn, so the agent stays
+aware of the current canvas.
 
 ## Renderer data path (full data, server-side)
 
@@ -80,4 +92,7 @@ epoch-**seconds**, so divide by 1000 in the renderer.
 ## Internal (not for the frontend)
 
 `POST /internal/tool/:verb` is the localhost callback the opencode plugin uses to
-reach the runtime (`data_*`, `canvas_*`, `get_canvas_state`). Frontends ignore it.
+reach the runtime (`data_*`, `canvas_*`, `get_canvas_state`, `renderer_list`).
+Frontends ignore it. The agent calls `renderer_list` to discover the window types
+it may create, each one's `spec` options, and the data shape it requires — the same
+manifests `GET /api/renderers` advertises to the web client.

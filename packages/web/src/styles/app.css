@@ -1,0 +1,330 @@
+/* =============================================================================
+   µ — app styles. Ported verbatim from the design mockup's index.html <style>
+   block (the softened, final iteration). The Spicadust design tokens come from
+   /ds/colors_and_type.css + /ds/components.css; everything here is µ-specific.
+   ============================================================================= */
+
+/* ---- app frame -------------------------------------------------------- */
+html, body { height: 100%; }
+body { overflow: hidden; }
+*, *::before, *::after { box-sizing: border-box; }
+
+/* paper-soft is near-white in the DS; nudge it so raised surfaces read */
+:root[data-theme="light"] { --paper-soft: #fbfbfb; --mu-hover: #f3f3f3; }
+:root[data-theme="dark"] { --mu-hover: var(--paper-grey); }
+
+:root {
+  --mu-rail-w: 56px;
+  --mu-rail-w-open: 280px;
+  --mu-head-h: 56px;
+  --mu-gap: 18px;
+  --mu-pad: 14px;
+}
+[data-density="compact"] { --mu-gap: 13px; --mu-pad: 10px; }
+[data-density="comfy"]   { --mu-gap: 26px; --mu-pad: 18px; }
+
+.mu-app { height: 100vh; display: flex; flex-direction: row; background: var(--paper); }
+.mu-left { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; position: relative; }
+
+/* ---- header ----------------------------------------------------------- */
+.mu-head {
+  flex: 0 0 var(--mu-head-h); display: flex; align-items: center; gap: 18px;
+  padding: 0 22px 0 calc(var(--mu-rail-w) + 18px); background: transparent; z-index: 100;
+}
+.mu-mark { font-family: var(--ds-font-mark); font-weight: 700; font-size: 20px; line-height: 1; }
+.mu-head__gh { display: inline-flex; align-items: center; gap: 7px; color: var(--muted); text-decoration: none; font-size: 13px; transition: color var(--ds-motion-base) var(--ds-ease-standard); }
+.mu-head__gh:hover { color: var(--ink); }
+.mu-head__gh svg { display: block; }
+.mu-head__right { margin-left: auto; display: flex; align-items: center; gap: 16px; }
+
+.mu-body { flex: 1 1 auto; display: flex; min-height: 0; position: relative; }
+
+/* ---- session rail (slim, hover-expand, floats over canvas) ------------ */
+.mu-rail {
+  position: absolute; top: 0; left: 0; bottom: 0; z-index: 9000;
+  width: var(--mu-rail-w); background: var(--paper-soft);
+  overflow: hidden;
+  transition: width var(--ds-motion-slow) var(--ds-ease-emphasized);
+}
+/* expansion is JS-controlled (data-expanded) so a pick can force-collapse it even
+   while the pointer is still over the rail — hover/focus just set the state. */
+.mu-rail[data-expanded="true"] { width: var(--mu-rail-w-open); }
+.mu-rail__inner { width: var(--mu-rail-w-open); height: 100%; display: flex; flex-direction: column; padding: 14px 4px; }
+.mu-rail__label { padding: 4px 8px 12px; color: var(--muted); opacity: 0; transition: opacity var(--ds-motion-base); }
+.mu-rail[data-expanded="true"] .mu-rail__label { opacity: 1; }
+.mu-rail__list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 2px; flex: 1; }
+
+.mu-rail__item, .mu-rail__new {
+  display: flex; align-items: center; gap: 12px; width: 100%;
+  padding: 5px 8px; border: 0; background: transparent; cursor: pointer;
+  font: inherit; color: var(--ink-soft); text-align: left; border-radius: var(--ds-radius-pill);
+  transition: background var(--ds-motion-base) var(--ds-ease-standard);
+}
+.mu-rail__item:hover, .mu-rail__new:hover { background: var(--mu-hover); }
+.mu-rail__item[data-active="true"] { color: var(--ink); }
+
+.mu-rail__marker {
+  flex: 0 0 auto; width: 32px; height: 32px; border-radius: var(--ds-radius-circle);
+  border: 1px solid var(--line-strong); background: var(--paper);
+  display: inline-flex; align-items: center; justify-content: center;
+  font-family: var(--ds-font-mono); font-size: 11px; letter-spacing: 0.02em;
+  color: var(--muted); position: relative; transition: all var(--ds-motion-base);
+}
+.mu-rail__item[data-active="true"] .mu-rail__marker {
+  background: var(--ink); border-color: var(--ink); color: var(--paper);
+}
+.mu-rail__marker[data-status="live"]::after {
+  content: ""; position: absolute; top: -1px; right: -1px;
+  width: 8px; height: 8px; border-radius: 50%;
+  background: var(--action); border: 1.5px solid var(--paper-soft);
+}
+.mu-rail__marker--new { border-style: dashed; color: var(--ink-soft); }
+.mu-rail__new:hover .mu-rail__marker--new { border-color: var(--ink); color: var(--ink); }
+
+.mu-rail__name {
+  flex: 1; min-width: 0; font-size: 13px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  opacity: 0; transition: opacity var(--ds-motion-base);
+}
+.mu-rail__count { color: var(--muted); opacity: 0; transition: opacity var(--ds-motion-base); }
+.mu-rail[data-expanded="true"] .mu-rail__name,
+.mu-rail[data-expanded="true"] .mu-rail__count { opacity: 1; }
+.mu-rail__new { margin-top: 8px; padding-top: 8px; }
+.mu-rail__rename {
+  flex: 1; min-width: 0; font: inherit; font-size: 13px; color: var(--ink);
+  background: var(--paper); border: 1px solid var(--action); border-radius: var(--ds-radius-sm);
+  padding: 2px 6px; outline: none;
+}
+
+/* right-click context menu for a session — soft floating card (à la sphaere) */
+.mu-ctx__scrim { position: fixed; inset: 0; z-index: 9500; }
+.mu-ctx {
+  position: fixed; z-index: 9600; min-width: 180px; padding: 6px;
+  background: var(--paper); border: 1px solid var(--line); border-radius: var(--ds-radius-lg);
+  box-shadow: 0 12px 32px -12px color-mix(in srgb, var(--ink) 30%, transparent);
+  display: flex; flex-direction: column;
+}
+.mu-ctx__item {
+  display: flex; align-items: center; gap: 11px; width: 100%; padding: 9px 12px;
+  border: 0; background: transparent; cursor: pointer; font: inherit; font-size: 13px;
+  color: var(--ink); text-align: left; border-radius: var(--ds-radius-pill);
+  transition: background var(--ds-motion-base) var(--ds-ease-standard);
+}
+.mu-ctx__item:hover { background: var(--mu-hover); }
+.mu-ctx__item svg { flex: 0 0 auto; color: var(--muted); }
+.mu-ctx__item--danger, .mu-ctx__item--danger svg { color: var(--danger); }
+.mu-ctx__item--danger:hover { background: color-mix(in srgb, var(--danger), transparent 90%); }
+.mu-ctx__sep { height: 1px; background: var(--line); margin: 5px 8px; }
+
+/* ---- stage + canvas --------------------------------------------------- */
+.mu-stage { flex: 1 1 auto; position: relative; min-width: 0; padding-left: var(--mu-rail-w); }
+.mu-canvas {
+  position: absolute; inset: 0 0 0 var(--mu-rail-w); overflow: auto;
+  background-color: var(--paper);
+  background-image: radial-gradient(circle, color-mix(in srgb, var(--ink), transparent 88%) 1px, transparent 1px);
+  background-size: 24px 24px; background-position: 12px 12px;
+}
+.mu-canvas__empty {
+  position: absolute; top: 42%; left: 50%; transform: translate(-50%, -50%);
+  display: flex; flex-direction: column; align-items: center; gap: 10px; text-align: center;
+  pointer-events: none;
+}
+.mu-canvas__empty .ds-loading-glyph { font-size: 40px; color: var(--line-strong); }
+.mu-empty__lead { font-size: 15px; color: var(--muted); margin: 0; }
+.mu-empty__hint { color: var(--muted); }
+
+/* ---- window ----------------------------------------------------------- */
+.mu-win {
+  position: absolute; display: flex; flex-direction: column;
+  background: var(--paper); border: 1px solid var(--line);
+  border-radius: var(--ds-radius-lg);
+  min-width: 300px; min-height: 200px; overflow: hidden;
+}
+.mu-win.is-dragging { border-color: var(--ink-soft); }
+.mu-win__bar {
+  flex: 0 0 38px; position: relative; display: flex; align-items: center;
+  padding: 0 14px;
+  cursor: grab; touch-action: none; user-select: none;
+}
+.mu-win.is-dragging .mu-win__bar { cursor: grabbing; }
+.mu-win__handle {
+  color: var(--muted); opacity: 0; transition: opacity var(--ds-motion-base);
+  max-width: 50%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.mu-win__bar:hover .mu-win__handle { opacity: 0.75; }
+.mu-win__title {
+  position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%);
+  font-size: 13px; color: var(--ink); white-space: nowrap; letter-spacing: -0.01em;
+}
+.mu-win__close {
+  margin-left: auto; width: 22px; height: 22px; border: 0; background: transparent;
+  color: var(--muted); cursor: pointer; border-radius: var(--ds-radius-circle);
+  display: inline-flex; align-items: center; justify-content: center;
+  opacity: 0; transition: opacity var(--ds-motion-base), background var(--ds-motion-base), color var(--ds-motion-base);
+}
+.mu-win__bar:hover .mu-win__close { opacity: 1; }
+.mu-win__close:hover { background: var(--danger); color: var(--paper); }
+
+.mu-legend {
+  flex: 0 0 auto; display: flex; align-items: center; gap: 14px;
+  padding: 2px 14px 8px;
+  font-family: var(--ds-font-mono); font-size: 11px;
+}
+.mu-legend__sym { color: var(--ink); font-weight: 600; letter-spacing: 0.04em; }
+.mu-legend__price { color: var(--ink-soft); font-variant-numeric: tabular-nums; }
+.mu-legend__chg { color: var(--muted); font-variant-numeric: tabular-nums; }
+.mu-legend__chg[data-dir="up"] { color: var(--system); }
+.mu-legend__chg[data-dir="down"] { color: var(--danger); }
+.mu-legend__key { color: var(--ink-soft); font-variant-numeric: tabular-nums; display: inline-flex; align-items: center; gap: 6px; }
+.mu-legend__key::before { content: ""; width: 14px; height: 2px; display: inline-block; }
+.mu-legend__key[data-series="a"]::before { background: var(--action); }
+.mu-legend__key[data-series="b"]::before { background: var(--ink-soft); }
+.mu-legend__tag {
+  margin-left: auto; color: var(--muted); letter-spacing: 0.12em; text-transform: uppercase; font-size: 10px;
+}
+.mu-win__body { flex: 1 1 auto; position: relative; min-height: 0; }
+.mu-chart { position: absolute; inset: 0; }
+.mu-memo { position: absolute; inset: 0; overflow: auto; padding: 4px 16px 16px; font-size: 13.5px; line-height: 1.6; color: var(--ink); }
+.mu-win__fallback {
+  position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 6px;
+  color: var(--muted); font-family: var(--ds-font-mono); font-size: 12px; text-align: center; padding: 16px;
+}
+/* a window whose renderer threw — flows in place so stacked errors don't overlap */
+.mu-win--error { position: relative; margin: 16px; width: 360px; height: auto; min-height: 120px; border-color: var(--danger); }
+.mu-win--error .mu-win__fallback { position: relative; inset: auto; }
+.mu-win--error .mu-win__fallback .ds-spec { color: var(--muted); opacity: 0.8; word-break: break-word; }
+
+.mu-win__resize {
+  position: absolute; right: 0; bottom: 0; width: 18px; height: 18px;
+  cursor: nwse-resize; touch-action: none; opacity: 0.55;
+  background-image: radial-gradient(circle, color-mix(in srgb, var(--ink), transparent 70%) 1.1px, transparent 1.5px);
+  background-size: 5px 5px; background-position: bottom 3px right 3px;
+  transition: opacity var(--ds-motion-base);
+}
+.mu-win:hover .mu-win__resize { opacity: 1; }
+
+/* ---- chat ------------------------------------------------------------- */
+.mu-chat {
+  flex: 0 0 auto; display: flex; flex-direction: column; min-height: 0;
+  background: #fbfbfb;
+}
+[data-theme="dark"] .mu-chat { background: var(--paper-soft); }
+.mu-chat__head {
+  flex: 0 0 auto; display: flex; align-items: center; gap: 14px;
+  padding: 0 22px; height: var(--mu-head-h);
+}
+.mu-chat__head .ds-btn--icon { flex: 0 0 auto; }
+.mu-chat__name { font-size: 14px; font-weight: 500; color: var(--ink); }
+.mu-chat__status { display: inline-flex; align-items: center; gap: 6px; color: var(--muted); margin-left: auto; }
+.mu-chat__status .ds-dot { background: var(--muted); }
+.mu-chat__status[data-status="live"] { color: var(--action); }
+.mu-chat__status[data-status="live"] .ds-dot { background: var(--action); }
+
+.mu-chat__stream {
+  flex: 1 1 auto; overflow-y: auto; padding: 22px 20px;
+  display: flex; flex-direction: column; gap: var(--mu-gap);
+}
+.mu-chat__intro { display: flex; flex-direction: column; gap: 10px; padding-bottom: 4px; }
+.mu-chat__intro .ds-caption { color: var(--muted); }
+
+.mu-turn { display: flex; flex-direction: column; }
+.mu-turn--user { align-items: flex-end; }
+.mu-bubble {
+  max-width: 86%; width: fit-content; background: #f3f3f3; color: var(--ink);
+  border-radius: 16px; padding: 8px 14px; font-size: 13.5px; line-height: 1.5;
+}
+[data-theme="dark"] .mu-bubble { background: var(--paper-grey); }
+.mu-turn--agent { flex-direction: row; gap: 12px; align-items: flex-start; }
+.mu-turn__role {
+  flex: 0 0 auto; width: 26px; height: 26px; border-radius: var(--ds-radius-circle);
+  background: var(--action-soft); color: var(--action);
+  display: inline-flex; align-items: center; justify-content: center;
+  font-family: var(--ds-font-mark); font-size: 14px; font-weight: 700;
+  text-transform: none; line-height: 1;
+}
+.mu-turn__col { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 8px; }
+.mu-prose { font-size: 13.5px; line-height: 1.6; color: var(--ink); }
+/* markdown elements emitted by react-markdown for agent prose */
+.mu-prose > :first-child { margin-top: 0; }
+.mu-prose > :last-child { margin-bottom: 0; }
+.mu-prose p { margin: 0 0 8px; }
+.mu-prose h1, .mu-prose h2, .mu-prose h3, .mu-prose h4 { margin: 12px 0 6px; line-height: 1.3; font-weight: 600; }
+.mu-prose h1 { font-size: 17px; }
+.mu-prose h2 { font-size: 15px; }
+.mu-prose h3 { font-size: 14px; }
+.mu-prose h4 { font-size: 13.5px; }
+.mu-prose ul, .mu-prose ol { margin: 0 0 8px; padding-left: 20px; }
+.mu-prose li { margin: 2px 0; }
+.mu-prose li > p { margin: 0; }
+.mu-prose a { color: var(--action); text-decoration: underline; text-underline-offset: 2px; }
+.mu-prose code {
+  font-family: var(--ds-font-mono); font-size: 0.88em;
+  background: color-mix(in srgb, var(--ink), transparent 92%); padding: 1px 5px; border-radius: var(--ds-radius-sm);
+}
+.mu-prose pre {
+  margin: 0 0 8px; padding: 10px 12px; overflow: auto;
+  background: color-mix(in srgb, var(--ink), transparent 94%);
+  border: 1px solid var(--line); border-radius: var(--ds-radius-md);
+}
+.mu-prose pre code { background: none; padding: 0; font-size: 12px; line-height: 1.5; }
+.mu-prose blockquote { margin: 0 0 8px; padding-left: 12px; border-left: 2px solid var(--line-strong); color: var(--muted); }
+.mu-prose table { border-collapse: collapse; margin: 0 0 8px; font-size: 12.5px; }
+.mu-prose th, .mu-prose td { border: 1px solid var(--line); padding: 4px 8px; text-align: left; }
+.mu-prose th { background: color-mix(in srgb, var(--ink), transparent 94%); font-weight: 600; }
+.mu-prose hr { border: 0; border-top: 1px solid var(--line); margin: 12px 0; }
+.mu-error { color: var(--danger); font-size: 12.5px; }
+
+.mu-ops {
+  display: flex; flex-direction: column; gap: 4px;
+  background: var(--paper); border-radius: var(--ds-radius-lg);
+  padding: 10px 14px;
+  font-family: var(--ds-font-mono); font-size: 11px; line-height: 1.5;
+}
+/* verb | arg on row 1; the (often long) ret wraps onto an indented row 2 — so a
+   full handle never overflows the chat column. */
+.mu-ops__row { display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: 1px 10px; align-items: baseline; }
+.mu-ops__verb { color: var(--action); white-space: nowrap; }
+.mu-ops__arg { color: var(--ink-soft); min-width: 0; overflow-wrap: anywhere; }
+.mu-ops__ret { grid-column: 2; color: var(--muted); min-width: 0; overflow-wrap: anywhere; }
+
+/* ---- composer --------------------------------------------------------- */
+.mu-composer { flex: 0 0 auto; padding: 12px 18px 18px; display: flex; flex-direction: column; gap: 10px; }
+.mu-suggest {
+  display: flex; align-items: center; gap: 10px; width: 100%;
+  padding: 9px 16px; border: 0; background: var(--paper-grey);
+  border-radius: var(--ds-radius-pill); cursor: pointer; font: inherit; text-align: left;
+  color: var(--ink-soft); transition: color var(--ds-motion-base), background var(--ds-motion-base);
+}
+.mu-suggest:hover { color: var(--ink); background: color-mix(in srgb, var(--action-soft), transparent 35%); }
+.mu-suggest .ds-spec { color: var(--action); flex: 0 0 auto; }
+.mu-suggest__text { font-family: var(--ds-font-mono); font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+.mu-composer__field {
+  display: flex; align-items: center; gap: 8px; padding: 6px 6px 6px 22px;
+  border: 1px solid var(--line-strong); border-radius: var(--ds-radius-pill);
+  background: var(--paper); transition: border-color var(--ds-motion-base);
+}
+.mu-composer__field:focus-within { border-color: var(--ink); }
+.mu-composer__input {
+  flex: 1; border: 0; background: transparent; outline: 0; resize: none;
+  font-family: inherit; font-size: 13.5px; line-height: 1.5; color: var(--ink);
+  max-height: 96px; overflow-y: auto; padding: 6px 0;
+}
+.mu-composer__input::placeholder { color: var(--muted); }
+.mu-composer__send {
+  flex: 0 0 auto; width: 34px; height: 34px; border-radius: var(--ds-radius-circle);
+  border: 1px solid var(--action); background: var(--action); color: var(--action-ink);
+  display: inline-flex; align-items: center; justify-content: center; cursor: pointer;
+  transition: background var(--ds-motion-base), opacity var(--ds-motion-base);
+}
+.mu-composer__send:hover { background: color-mix(in srgb, var(--action), var(--paper) 18%); }
+.mu-composer__send:disabled { opacity: 0.4; cursor: not-allowed; }
+
+/* ---- scrollbars (thin, on-brand) -------------------------------------- */
+.mu-chat__stream::-webkit-scrollbar, .mu-canvas::-webkit-scrollbar { width: 10px; height: 10px; }
+.mu-chat__stream::-webkit-scrollbar-thumb, .mu-canvas::-webkit-scrollbar-thumb {
+  background: var(--line-strong); border: 3px solid transparent; background-clip: padding-box; border-radius: 999px;
+}
+.mu-chat__stream::-webkit-scrollbar-thumb:hover, .mu-canvas::-webkit-scrollbar-thumb:hover { background: var(--muted); background-clip: padding-box; }
+
+/* hide TradingView attribution defensively (also disabled via chart option) */
+#tv-attr-logo, a[title*="TradingView"] { display: none !important; }
