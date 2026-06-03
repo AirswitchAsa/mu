@@ -1,0 +1,23 @@
+{
+  "name": "@mu/broker",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "DataBroker: DuckDB+parquet storage, catalog, Shape implementations.",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "types": "./dist/index.d.ts",
+  "main": "./dist/index.js",
+  "files": ["dist"],
+  "scripts": {
+    "build": "tsc --build"
+  },
+  "dependencies": {
+    "@mu/protocol": "workspace:*",
+    "@duckdb/node-api": "1.5.3-r.3"
+  }
+}

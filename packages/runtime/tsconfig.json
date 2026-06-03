@@ -1,0 +1,14 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "rootDir": "src",
+    "outDir": "dist"
+  },
+  "include": ["src/**/*"],
+  "exclude": ["**/*.test.ts", "**/test-fixtures.ts"],
+  "references": [
+    { "path": "../protocol" },
+    { "path": "../broker" },
+    { "path": "../resource-sdk" }
+  ]
+}

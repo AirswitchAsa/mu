@@ -1,0 +1,16 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "rootDir": "src",
+    "outDir": "dist"
+  },
+  "include": ["src/**/*"],
+  "exclude": ["**/*.test.ts"],
+  "references": [
+    { "path": "../protocol" },
+    { "path": "../broker" },
+    { "path": "../resource-sdk" },
+    { "path": "../runtime" },
+    { "path": "../opencode-plugin" }
+  ]
+}

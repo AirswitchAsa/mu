@@ -1,0 +1,23 @@
+{
+  "name": "@mu/opencode-plugin",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "The opencode binding: µ tool surface as opencode tools + the OpencodeDriver. The only package that knows opencode exists.",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "types": "./dist/index.d.ts",
+  "main": "./dist/index.js",
+  "files": ["dist"],
+  "scripts": {
+    "build": "tsc --build"
+  },
+  "dependencies": {
+    "@opencode-ai/sdk": "1.15.5",
+    "@opencode-ai/plugin": "1.15.5"
+  }
+}

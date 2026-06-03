@@ -1,0 +1,13 @@
+{
+  "files": [],
+  "references": [
+    { "path": "packages/protocol" },
+    { "path": "packages/broker" },
+    { "path": "packages/resource-sdk" },
+    { "path": "packages/runtime" },
+    { "path": "packages/opencode-plugin" },
+    { "path": "packages/server" },
+    { "path": "packages/opencode-spike" },
+    { "path": "resources/yahoo-finance" }
+  ]
+}

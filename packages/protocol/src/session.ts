@@ -1,0 +1,44 @@
+import type { Handle } from "./handle.js";
+import type { Provenance } from "./provenance.js";
+import type { Placement, Window } from "./window.js";
+
+export interface ChatMessage {
+  readonly role: "user" | "assistant";
+  readonly text: string;
+  readonly at: number;
+}
+
+/** One entry in the provenance trail: a window's binding back to a handle + stamp. */
+export interface ProvenanceEntry {
+  readonly id: string;
+  readonly windowId: string;
+  readonly handle: Handle;
+  readonly provenance: Provenance | null;
+  readonly at: number;
+}
+
+/**
+ * SessionState — the authoritative state of one µ session (session-state.dog.md).
+ * Mutated only through apply_canvas_op. `windows` (content) is agent-writable;
+ * `layout` (placement) is user-only. Datasets are referenced by handle, never
+ * embedded — the session owns bindings, not data.
+ */
+export interface SessionState {
+  readonly id: string;
+  windows: Window[];
+  /** windowId → placement; owned by user + auto_layout. */
+  layout: Record<string, Placement>;
+  focusedWindowId?: string;
+  messages: ChatMessage[];
+  provenanceLog: ProvenanceEntry[];
+  readonly createdAt: number;
+  updatedAt: number;
+}
+
+/** The full canvas detail returned by get_canvas_state (no dataset payloads). */
+export interface CanvasState {
+  readonly id: string;
+  readonly windows: readonly Window[];
+  readonly layout: Readonly<Record<string, Placement>>;
+  readonly focusedWindowId?: string;
+}

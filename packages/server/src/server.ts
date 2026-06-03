@@ -1,0 +1,219 @@
+import { randomUUID } from "node:crypto";
+import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
+import { MuErrorException, type CanvasOp } from "@mu/protocol";
+import { MuRuntime } from "@mu/runtime";
+import { OpencodeDriver } from "@mu/opencode-plugin";
+import { coreRenderers } from "./core-renderers.js";
+
+export interface MuServerOptions {
+  /** root dir for the broker's shared store. */
+  dataRoot: string;
+  /** dir scanned for first-party resource plugins. */
+  resourcesDir: string;
+  /** "provider/model"; when set, the opencode driver is started and /message works. */
+  model?: string;
+  port?: number;
+  hostname?: string;
+}
+
+export interface MuServerHandle {
+  url: string;
+  runtime: MuRuntime;
+  driver?: OpencodeDriver;
+  close(): Promise<void>;
+}
+
+const CORS = {
+  "access-control-allow-origin": "*",
+  "access-control-allow-methods": "GET,POST,DELETE,OPTIONS",
+  "access-control-allow-headers": "content-type",
+};
+
+function sendJson(res: ServerResponse, status: number, body: unknown): void {
+  res.writeHead(status, { "content-type": "application/json", ...CORS });
+  res.end(JSON.stringify(body));
+}
+
+function sendError(res: ServerResponse, err: unknown): void {
+  if (err instanceof MuErrorException) {
+    sendJson(res, err.code === "HANDLE_NOT_FOUND" ? 404 : 400, { error: err.toMuError() });
+    return;
+  }
+  sendJson(res, 500, { error: { code: "INTERNAL", message: err instanceof Error ? err.message : String(err) } });
+}
+
+async function readJson(req: IncomingMessage): Promise<Record<string, unknown>> {
+  let body = "";
+  for await (const chunk of req) body += chunk;
+  return body ? (JSON.parse(body) as Record<string, unknown>) : {};
+}
+
+function listen(server: Server, port: number, hostname: string): Promise<void> {
+  return new Promise((resolve) => server.listen(port, hostname, resolve));
+}
+
+/**
+ * Boot the µ server (mu-server.dog.md): assemble the runtime (broker + resources +
+ * renderers + sessions + tool surface), expose the HTTP/SSE API the web client
+ * consumes plus the internal tool-callback the opencode plugin hits, and (when a
+ * model is configured) supervise opencode. One process.
+ */
+export async function createMuServer(opts: MuServerOptions): Promise<MuServerHandle> {
+  const runtime = await MuRuntime.create({
+    dataRoot: opts.dataRoot,
+    resourcesDir: opts.resourcesDir,
+    renderers: coreRenderers,
+  });
+  let driver: OpencodeDriver | undefined;
+
+  const httpServer = createServer((req, res) => {
+    void handle(req, res).catch((err) => sendError(res, err));
+  });
+
+  async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> {
+    const method = req.method ?? "GET";
+    const url = new URL(req.url ?? "/", "http://localhost");
+    const seg = url.pathname.split("/").filter(Boolean);
+
+    if (method === "OPTIONS") {
+      res.writeHead(204, CORS).end();
+      return;
+    }
+
+    // --- internal: opencode plugin tool callback ---
+    if (method === "POST" && seg[0] === "internal" && seg[1] === "tool" && seg[2]) {
+      const { sessionID, args } = await readJson(req);
+      try {
+        const ok = await runtime.handleToolCall(String(sessionID), seg[2], (args as Record<string, unknown>) ?? {});
+        sendJson(res, 200, { ok });
+      } catch (err) {
+        const code = err instanceof MuErrorException ? err.code : "FETCH_FAILED";
+        sendJson(res, 200, { error: { code, message: err instanceof Error ? err.message : String(err) } });
+      }
+      return;
+    }
+
+    if (seg[0] !== "api") {
+      sendJson(res, 404, { error: { code: "NOT_FOUND", message: url.pathname } });
+      return;
+    }
+
+    // --- public API ---
+    // GET /api/renderers
+    if (method === "GET" && seg[1] === "renderers") {
+      sendJson(res, 200, { renderers: runtime.renderers.list() });
+      return;
+    }
+    // GET /api/data/list
+    if (method === "GET" && seg[1] === "data" && seg[2] === "list") {
+      const out = await runtime.dataList({
+        provider: url.searchParams.get("provider") ?? undefined,
+        shape: url.searchParams.get("shape") ?? undefined,
+        entity: url.searchParams.get("entity") ?? undefined,
+      });
+      sendJson(res, 200, out);
+      return;
+    }
+    // GET /api/resolve?handle=...
+    if (method === "GET" && seg[1] === "resolve") {
+      const handleParam = url.searchParams.get("handle");
+      if (!handleParam) {
+        sendJson(res, 400, { error: { code: "BAD_REQUEST", message: "missing ?handle" } });
+        return;
+      }
+      const rows = await runtime.resolve(handleParam);
+      sendJson(res, 200, { handle: handleParam, rows });
+      return;
+    }
+    // POST /api/sessions
+    if (method === "POST" && seg[1] === "sessions" && seg.length === 2) {
+      const id = driver ? await driver.createSession() : randomUUID();
+      runtime.createSession(id);
+      sendJson(res, 201, { sessionId: id });
+      return;
+    }
+    if (seg[1] === "sessions" && seg[2]) {
+      const id = seg[2];
+      // DELETE /api/sessions/:id
+      if (method === "DELETE" && seg.length === 3) {
+        if (driver) await driver.deleteSession(id);
+        runtime.deleteSession(id);
+        sendJson(res, 200, { ok: true });
+        return;
+      }
+      // GET /api/sessions/:id/canvas
+      if (method === "GET" && seg[3] === "canvas") {
+        sendJson(res, 200, runtime.getCanvasState(id));
+        return;
+      }
+      // POST /api/sessions/:id/canvas/ops  (user layout/content edits)
+      if (method === "POST" && seg[3] === "canvas" && seg[4] === "ops") {
+        const { ops } = await readJson(req);
+        const summary = runtime.applyUserOps(id, (ops as CanvasOp[]) ?? []);
+        sendJson(res, 200, { summary });
+        return;
+      }
+      // POST /api/sessions/:id/message  (SSE)
+      if (method === "POST" && seg[3] === "message") {
+        await handleMessage(id, await readJson(req), res);
+        return;
+      }
+    }
+
+    sendJson(res, 404, { error: { code: "NOT_FOUND", message: url.pathname } });
+  }
+
+  async function handleMessage(id: string, body: Record<string, unknown>, res: ServerResponse): Promise<void> {
+    if (!driver) {
+      sendJson(res, 400, { error: { code: "NO_DRIVER", message: "server started without a model; /message disabled" } });
+      return;
+    }
+    const text = String(body["text"] ?? "");
+    res.writeHead(200, {
+      "content-type": "text/event-stream",
+      "cache-control": "no-cache",
+      connection: "keep-alive",
+      ...CORS,
+    });
+    const send = (event: unknown): void => {
+      res.write(`data: ${JSON.stringify(event)}\n\n`);
+    };
+    const unsubscribe = runtime.subscribe(id, send);
+    try {
+      const session = runtime.sessions.require(id);
+      session.messages.push({ role: "user", text, at: Date.now() });
+      // inject_canvas_state: the cheap summary rides along as an extra prompt part.
+      const summary = runtime.canvasSummary(id);
+      const reply = await driver.prompt(id, text, [`\n\n[µ canvas state] ${JSON.stringify(summary)}`]);
+      session.messages.push({ role: "assistant", text: reply, at: Date.now() });
+      runtime.publish(id, { type: "chat", role: "assistant", text: reply });
+      runtime.publish(id, { type: "done" });
+    } catch (err) {
+      const code = err instanceof MuErrorException ? err.code : "FETCH_FAILED";
+      runtime.publish(id, { type: "error", error: { code, message: err instanceof Error ? err.message : String(err) } });
+    } finally {
+      unsubscribe();
+      res.end();
+    }
+  }
+
+  await listen(httpServer, opts.port ?? 0, opts.hostname ?? "127.0.0.1");
+  const addr = httpServer.address();
+  const port = typeof addr === "object" && addr ? addr.port : opts.port ?? 0;
+  const url = `http://127.0.0.1:${port}`;
+
+  if (opts.model) {
+    // The plugin's tools call back to this same server's /internal endpoint.
+    driver = await OpencodeDriver.start({ model: opts.model, callbackUrl: url });
+  }
+
+  return {
+    url,
+    runtime,
+    driver,
+    close: async () => {
+      driver?.close();
+      await new Promise<void>((resolve) => httpServer.close(() => resolve()));
+    },
+  };
+}

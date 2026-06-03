@@ -1,0 +1,30 @@
+{
+  "name": "@mu/server",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "µ server: HTTP/SSE composition root. Boots the runtime, loads resources, drives opencode.",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "types": "./dist/index.d.ts",
+  "main": "./dist/index.js",
+  "bin": {
+    "mu-server": "./dist/main.js"
+  },
+  "files": ["dist"],
+  "scripts": {
+    "build": "tsc --build",
+    "start": "node dist/main.js"
+  },
+  "dependencies": {
+    "@mu/protocol": "workspace:*",
+    "@mu/broker": "workspace:*",
+    "@mu/resource-sdk": "workspace:*",
+    "@mu/runtime": "workspace:*",
+    "@mu/opencode-plugin": "workspace:*"
+  }
+}

@@ -1,0 +1,24 @@
+import { resolve } from "node:path";
+import { createMuServer } from "./server.js";
+
+/**
+ * The Docker image's main / `mu-server` entrypoint. Config via env:
+ *   PORT (4000) · MU_DATA_ROOT (./.mu-data) · MU_RESOURCES_DIR (./resources) ·
+ *   MU_MODEL (deepseek/deepseek-chat). Run from the repo root so MU_RESOURCES_DIR
+ *   resolves to the workspace `resources/`.
+ */
+const server = await createMuServer({
+  dataRoot: process.env["MU_DATA_ROOT"] ?? resolve(process.cwd(), ".mu-data"),
+  resourcesDir: process.env["MU_RESOURCES_DIR"] ?? resolve(process.cwd(), "resources"),
+  model: process.env["MU_MODEL"] ?? "deepseek/deepseek-chat",
+  port: Number(process.env["PORT"] ?? 4000),
+});
+
+// eslint-disable-next-line no-console
+console.log(`µ server listening on ${server.url}`);
+
+const shutdown = (): void => {
+  void server.close().then(() => process.exit(0));
+};
+process.on("SIGINT", shutdown);
+process.on("SIGTERM", shutdown);

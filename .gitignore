@@ -6,3 +6,6 @@ dist/
 .env.*
 .turbo/
 coverage/
+*.tsbuildinfo
+.mu-data/
+.scratch/

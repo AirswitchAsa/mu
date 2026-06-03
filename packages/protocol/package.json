@@ -1,0 +1,19 @@
+{
+  "name": "@mu/protocol",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Pure µ contracts: Handle, Shape, descriptors, manifests. Zero runtime deps.",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "types": "./dist/index.d.ts",
+  "main": "./dist/index.js",
+  "files": ["dist"],
+  "scripts": {
+    "build": "tsc --build"
+  }
+}

@@ -1,0 +1,24 @@
+{
+  "name": "@mu/runtime",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "MuRuntime: session store, canvas, renderer registry, the µ-native tool surface.",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "types": "./dist/index.d.ts",
+  "main": "./dist/index.js",
+  "files": ["dist"],
+  "scripts": {
+    "build": "tsc --build"
+  },
+  "dependencies": {
+    "@mu/protocol": "workspace:*",
+    "@mu/broker": "workspace:*",
+    "@mu/resource-sdk": "workspace:*"
+  }
+}
