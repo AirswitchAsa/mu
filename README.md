@@ -6,7 +6,8 @@ You bring an agent and your own data; µ turns the agent's structured output int
 a live canvas of typed windows — price charts, indicator panels, tables, memos,
 news timelines — sitting beside the conversation that produced them.
 
-> **Status:** early scaffold. Design notes and architecture come next; no code yet.
+> **Status:** design complete, no code yet. See [docs/](docs/) — start with
+> [docs/overview.md](docs/overview.md). Implementation is next.
 
 ## Principle
 
