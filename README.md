@@ -6,7 +6,7 @@ You bring an agent and your own data; µ turns the agent's validated tool calls 
 a live canvas of typed windows — price charts, indexed comparisons, memos — sitting
 beside the conversation that produced them.
 
-<img width="2284" height="1354" alt="image" src="https://github.com/user-attachments/assets/12f2050a-2754-4289-8b0b-52590595bf16" />
+<img width="1422" height="1356" alt="image" src="https://github.com/user-attachments/assets/dab6b3e4-9b45-40fc-8b86-496ba5afdbf8" />
 
 > **Status:** v0 implemented and runnable end-to-end — a pnpm monorepo (data plane,
 > runtime, opencode binding, HTTP/SSE server) plus a Vite/React web client. See
