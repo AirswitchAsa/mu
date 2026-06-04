@@ -46,8 +46,6 @@ to components/data defined in these specs.
   graph). No Turborepo. The µ server targets **Node**; the `#OpencodeDriver`
   spawns + supervises opencode via the SDK (`createOpencodeServer`) and talks to
   it over the SDK client, so µ's runtime stays decoupled from opencode's.
-- **Spike package:** `@mu/opencode-spike` is a throwaway kept only for its
-  opencode-integration stress test; it is not part of the dependency graph above.
 - **In-process vs. worker plugins (v0):** `#Resource`/`#Renderer` plugins are
   trusted in-process code in v0. A worker/host-boundary variant is later work; the
   SDK surfaces are shaped to permit it without changing author code.

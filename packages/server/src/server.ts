@@ -148,6 +148,12 @@ export async function createMuServer(opts: MuServerOptions): Promise<MuServerHan
         sendJson(res, 200, runtime.getCanvasState(id));
         return;
       }
+      // GET /api/sessions/:id/title  (opencode's auto-generated session title)
+      if (method === "GET" && seg[3] === "title") {
+        const title = driver ? await driver.getSessionTitle(id) : undefined;
+        sendJson(res, 200, { title: title ?? null });
+        return;
+      }
       // GET /api/sessions/:id/messages  (chat history, for reload-restore)
       if (method === "GET" && seg[3] === "messages") {
         sendJson(res, 200, { messages: runtime.sessions.require(id).messages });
@@ -158,6 +164,13 @@ export async function createMuServer(opts: MuServerOptions): Promise<MuServerHan
         const { ops } = await readJson(req);
         const summary = runtime.applyUserOps(id, (ops as CanvasOp[]) ?? []);
         sendJson(res, 200, { summary });
+        return;
+      }
+      // POST /api/sessions/:id/refresh  (manual re-acquire of bound handles)
+      if (method === "POST" && seg[3] === "refresh") {
+        const { handles } = await readJson(req);
+        const out = await runtime.refreshSession(id, Array.isArray(handles) ? (handles as string[]) : undefined);
+        sendJson(res, 200, out);
         return;
       }
       // POST /api/sessions/:id/message  (SSE)

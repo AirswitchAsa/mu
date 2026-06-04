@@ -1,11 +1,20 @@
 import { resolve } from "node:path";
 import { createMuServer } from "./server.js";
 
+// Load `.env` (cwd) before reading any keys, so keyed resources (FINNHUB_API_KEY,
+// FRED_API_KEY, …) light up at startup. Best-effort: a missing .env is fine.
+try {
+  process.loadEnvFile?.();
+} catch {
+  /* no .env — keyed resources stay dormant (isConfigured false) */
+}
+
 /**
  * The Docker image's main / `mu-server` entrypoint. Config via env:
  *   PORT (4000) · MU_DATA_ROOT (./.mu-data) · MU_RESOURCES_DIR (./resources) ·
- *   MU_MODEL (deepseek/deepseek-chat) · MU_TURN_TIMEOUT_MS (180000). Run from the
- *   repo root so MU_RESOURCES_DIR resolves to the workspace `resources/`.
+ *   MU_MODEL (deepseek/deepseek-chat) · MU_TURN_TIMEOUT_MS (180000). Resource keys
+ *   (FINNHUB_API_KEY, FRED_API_KEY, …) come from `.env`/env. Run from the repo root
+ *   so MU_RESOURCES_DIR resolves to the workspace `resources/`.
  */
 const server = await createMuServer({
   dataRoot: process.env["MU_DATA_ROOT"] ?? resolve(process.cwd(), ".mu-data"),

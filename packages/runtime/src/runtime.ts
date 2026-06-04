@@ -1,12 +1,13 @@
 import { EventEmitter } from "node:events";
-import type {
-  CanvasOp,
-  CanvasState,
-  CanvasSummary,
-  Handle,
-  SessionState,
-  ViewResult,
-  ViewSlice,
+import {
+  MuErrorException,
+  type CanvasOp,
+  type CanvasState,
+  type CanvasSummary,
+  type Handle,
+  type SessionState,
+  type ViewResult,
+  type ViewSlice,
 } from "@mu/protocol";
 import { DataBroker } from "@mu/broker";
 import { AcquisitionCoordinator, ResourceRegistry, loadResources } from "@mu/resource-sdk";
@@ -100,6 +101,60 @@ export class MuRuntime {
   // --- user path (web client canvas edits) ---
   applyUserOps(sessionId: string, ops: readonly CanvasOp[]): CanvasSummary {
     return this.tools.applyCanvasOps(sessionId, ops, "user").summary;
+  }
+
+  // --- user path (manual refresh) ---
+  /**
+   * Re-acquire one handle from its stored descriptor (meta.json) — the same
+   * on-demand fetch+merge the agent's data_fetch runs. The handle string is
+   * unchanged (same identity), so a bound card sees the updated rows on re-resolve.
+   * For `releases` this is where a now-available actual lands as a new vintage.
+   */
+  async refreshHandle(handle: Handle): Promise<Handle> {
+    const meta = await this.broker.describe(handle);
+    if (!meta) throw new MuErrorException("HANDLE_NOT_FOUND", handle);
+    const d = meta.descriptor;
+    await this.coordinator.acquire(
+      d.identity.provider,
+      { ...d.queryParams, shape: d.shape, entity: d.identity.entity },
+      "on_demand",
+    );
+    return handle;
+  }
+
+  /**
+   * Refresh the data-backed handles of a session (the global "refresh" button).
+   * With no `handles`, refreshes every distinct bound handle in the canvas. Each
+   * handle is isolated: one failure (rate-limit, unconfigured key) is reported but
+   * never blocks the others. Returns which handles were refreshed (the client
+   * re-resolves exactly those).
+   */
+  async refreshSession(
+    sessionId: string,
+    handles?: readonly Handle[],
+  ): Promise<{ refreshed: Handle[]; errors: { handle: Handle; code?: string; message: string }[] }> {
+    const session = this.sessions.require(sessionId);
+    const targets =
+      handles && handles.length > 0
+        ? [...handles]
+        : [...new Set(session.windows.flatMap((w) => w.bindings))];
+    const refreshed: Handle[] = [];
+    const errors: { handle: Handle; code?: string; message: string }[] = [];
+    await Promise.all(
+      targets.map(async (h) => {
+        try {
+          await this.refreshHandle(h);
+          refreshed.push(h);
+        } catch (err) {
+          errors.push({
+            handle: h,
+            code: err instanceof MuErrorException ? err.code : undefined,
+            message: err instanceof Error ? err.message : String(err),
+          });
+        }
+      }),
+    );
+    return { refreshed, errors };
   }
 
   // --- reads ---

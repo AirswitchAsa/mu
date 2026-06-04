@@ -77,7 +77,8 @@ body { overflow: hidden; }
 .mu-rail__item[data-active="true"] .mu-rail__marker {
   background: var(--ink); border-color: var(--ink); color: var(--paper);
 }
-.mu-rail__marker[data-status="live"]::after {
+/* unread marker: a session got an assistant reply you haven't opened yet. */
+.mu-rail__marker[data-unread]::after {
   content: ""; position: absolute; top: -1px; right: -1px;
   width: 8px; height: 8px; border-radius: 50%;
   background: var(--action); border: 1.5px solid var(--paper-soft);
@@ -253,8 +254,7 @@ body.mu-is-dragging { cursor: grabbing; user-select: none; }
   padding: 4px 12px 8px;
 }
 .mu-news__bar .ds-spec { white-space: nowrap; }
-.mu-news__live { display: inline-flex; align-items: center; gap: 6px; color: var(--action); }
-.mu-news__live .ds-dot { background: var(--action); }
+.mu-news__updated { display: inline-flex; align-items: center; gap: 6px; color: var(--muted); }
 .mu-news__list { flex: 1 1 auto; overflow-y: auto; min-height: 0; }
 .mu-news__item { display: flex; gap: 12px; padding: 13px 12px; transition: background var(--ds-motion-fast); }
 .mu-news__item + .mu-news__item { border-top: 1px solid var(--line); }
@@ -314,6 +314,15 @@ body.mu-is-dragging { cursor: grabbing; user-select: none; }
 .mu-rel__vals { flex: 0 0 auto; display: inline-flex; align-items: baseline; gap: 6px; font-family: var(--ds-font-mono); font-size: 11px; white-space: nowrap; }
 .mu-rel__actual { color: var(--ink); font-variant-numeric: tabular-nums; }
 .mu-rel__fc { color: var(--muted); font-variant-numeric: tabular-nums; }
+/* surprise direction: beat (actual > est) reads system/green, miss reads danger. */
+.mu-rel__vals[data-surprise="1"] .mu-rel__actual { color: var(--system); }
+.mu-rel__vals[data-surprise="-1"] .mu-rel__actual { color: var(--danger); }
+/* a headline that links out to the article (live wire) */
+.mu-news__headlink { color: inherit; text-decoration: none; }
+.mu-news__headlink:hover { text-decoration: underline; }
+/* refresh-button spinner */
+.mu-spin { animation: mu-spin 0.8s linear infinite; transform-origin: 50% 50%; }
+@keyframes mu-spin { to { transform: rotate(360deg); } }
 .mu-reltag {
   flex: 0 0 auto; font-family: var(--ds-font-mono); font-size: 9px; letter-spacing: 0.12em;
   text-transform: uppercase; padding: 2px 7px; border-radius: var(--ds-radius-pill);
@@ -322,6 +331,32 @@ body.mu-is-dragging { cursor: grabbing; user-select: none; }
 .mu-reltag--released { color: var(--system); background: color-mix(in srgb, var(--system), transparent 88%); }
 .mu-reltag--revised { color: var(--warning); background: color-mix(in srgb, var(--warning), transparent 86%); }
 .mu-reltag--scheduled { color: var(--ink-soft); border-color: var(--line-strong); }
+
+/* ---- key stats (cross-section panel) ---------------------------------- */
+.mu-stats { flex: 1 1 auto; display: flex; flex-direction: column; min-height: 0; }
+.mu-stats__bar {
+  flex: 0 0 auto; display: flex; align-items: center; justify-content: space-between; gap: 10px;
+  padding: 4px 12px 8px;
+}
+.mu-stats__bar .ds-spec { white-space: nowrap; }
+.mu-stats__updated { color: var(--muted); }
+.mu-stats__list { flex: 1 1 auto; overflow-y: auto; min-height: 0; padding: 2px 0 6px; }
+.mu-stats__empty { padding: 12px; }
+.mu-stats__group {
+  padding: 9px 12px 4px; color: var(--action);
+}
+.mu-stats__grid { margin: 0; padding: 0; }
+.mu-stats__row {
+  display: flex; align-items: baseline; justify-content: space-between; gap: 12px;
+  padding: 6px 12px; transition: background var(--ds-motion-fast);
+}
+.mu-stats__row:hover { background: var(--mu-hover); }
+.mu-stats__label { margin: 0; font-size: 12.5px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.mu-stats__value {
+  margin: 0; flex: 0 0 auto; font-family: var(--ds-font-mono); font-size: 12px;
+  color: var(--ink); font-variant-numeric: tabular-nums; white-space: nowrap;
+}
+/* (scrollbar styling is unified in the scrollbars section below) */
 
 /* ---- chat ------------------------------------------------------------- */
 .mu-chat {
@@ -335,10 +370,6 @@ body.mu-is-dragging { cursor: grabbing; user-select: none; }
 }
 .mu-chat__head .ds-btn--icon { flex: 0 0 auto; }
 .mu-chat__name { font-size: 14px; font-weight: 500; color: var(--ink); }
-.mu-chat__status { display: inline-flex; align-items: center; gap: 6px; color: var(--muted); margin-left: auto; }
-.mu-chat__status .ds-dot { background: var(--muted); }
-.mu-chat__status[data-status="live"] { color: var(--action); }
-.mu-chat__status[data-status="live"] .ds-dot { background: var(--action); }
 
 .mu-chat__stream {
   flex: 1 1 auto; overflow-y: auto; padding: 22px 20px;
@@ -444,17 +475,55 @@ body.mu-is-dragging { cursor: grabbing; user-select: none; }
 .mu-composer__send:hover { background: color-mix(in srgb, var(--action), var(--paper) 18%); }
 .mu-composer__send:disabled { opacity: 0.4; cursor: not-allowed; }
 
-/* ---- scrollbars (thin, on-brand, transparent track) ------------------- */
-.mu-chat__stream::-webkit-scrollbar, .mu-grid::-webkit-scrollbar,
-.mu-news__list::-webkit-scrollbar, .mu-rel__list::-webkit-scrollbar { width: 10px; height: 10px; }
-.mu-chat__stream::-webkit-scrollbar-track, .mu-grid::-webkit-scrollbar-track,
-.mu-news__list::-webkit-scrollbar-track, .mu-rel__list::-webkit-scrollbar-track { background: transparent; }
-.mu-chat__stream::-webkit-scrollbar-thumb, .mu-grid::-webkit-scrollbar-thumb,
-.mu-news__list::-webkit-scrollbar-thumb, .mu-rel__list::-webkit-scrollbar-thumb {
-  background: var(--line-strong); border: 3px solid transparent; background-clip: padding-box; border-radius: 999px;
+/* ---- scrollbars: thin, on-brand, HIDDEN at rest, fading in softly. ---------
+   The track is always transparent and the thumb is transparent at rest (so an
+   idle surface reads as "no scrollbar"); the thumb fades in via a background
+   transition. Cards reveal on :hover / :focus-within. (The CANVAS .mu-grid has
+   NO scrollbar at all — it still scrolls, just without a bar; see below.) ----- */
+.mu-chat__stream, .mu-news__list, .mu-rel__list,
+.mu-stats__list, .mu-memo, .mu-prose pre {
+  scrollbar-width: thin; scrollbar-color: transparent transparent; /* Firefox: hidden at rest */
 }
-.mu-chat__stream::-webkit-scrollbar-thumb:hover, .mu-grid::-webkit-scrollbar-thumb:hover,
-.mu-news__list::-webkit-scrollbar-thumb:hover, .mu-rel__list::-webkit-scrollbar-thumb:hover { background: var(--muted); background-clip: padding-box; }
+/* Firefox reveal: cards on hover/focus */
+.mu-chat__stream:hover, .mu-chat__stream:focus-within,
+.mu-news__list:hover, .mu-news__list:focus-within,
+.mu-rel__list:hover, .mu-rel__list:focus-within,
+.mu-stats__list:hover, .mu-stats__list:focus-within,
+.mu-memo:hover, .mu-memo:focus-within,
+.mu-prose pre:hover { scrollbar-color: var(--line-strong) transparent; }
+
+.mu-chat__stream::-webkit-scrollbar,
+.mu-news__list::-webkit-scrollbar, .mu-rel__list::-webkit-scrollbar,
+.mu-stats__list::-webkit-scrollbar, .mu-memo::-webkit-scrollbar,
+.mu-prose pre::-webkit-scrollbar { width: 10px; height: 10px; }
+.mu-chat__stream::-webkit-scrollbar-track,
+.mu-news__list::-webkit-scrollbar-track, .mu-rel__list::-webkit-scrollbar-track,
+.mu-stats__list::-webkit-scrollbar-track, .mu-memo::-webkit-scrollbar-track,
+.mu-prose pre::-webkit-scrollbar-track { background: transparent; }
+/* thumb invisible at rest (gutter stays reserved → no layout shift), soft fade */
+.mu-chat__stream::-webkit-scrollbar-thumb,
+.mu-news__list::-webkit-scrollbar-thumb, .mu-rel__list::-webkit-scrollbar-thumb,
+.mu-stats__list::-webkit-scrollbar-thumb, .mu-memo::-webkit-scrollbar-thumb,
+.mu-prose pre::-webkit-scrollbar-thumb {
+  background: transparent; border: 3px solid transparent; background-clip: padding-box; border-radius: 999px;
+  transition: background-color var(--ds-motion-base) var(--ds-ease-standard);
+}
+/* reveal: cards on hover/focus */
+.mu-chat__stream:hover::-webkit-scrollbar-thumb, .mu-chat__stream:focus-within::-webkit-scrollbar-thumb,
+.mu-news__list:hover::-webkit-scrollbar-thumb, .mu-news__list:focus-within::-webkit-scrollbar-thumb,
+.mu-rel__list:hover::-webkit-scrollbar-thumb, .mu-rel__list:focus-within::-webkit-scrollbar-thumb,
+.mu-stats__list:hover::-webkit-scrollbar-thumb, .mu-stats__list:focus-within::-webkit-scrollbar-thumb,
+.mu-memo:hover::-webkit-scrollbar-thumb, .mu-memo:focus-within::-webkit-scrollbar-thumb,
+.mu-prose pre:hover::-webkit-scrollbar-thumb { background: var(--line-strong); background-clip: padding-box; }
+/* darker when pointing right at the thumb */
+.mu-chat__stream::-webkit-scrollbar-thumb:hover,
+.mu-news__list::-webkit-scrollbar-thumb:hover, .mu-rel__list::-webkit-scrollbar-thumb:hover,
+.mu-stats__list::-webkit-scrollbar-thumb:hover, .mu-memo::-webkit-scrollbar-thumb:hover,
+.mu-prose pre::-webkit-scrollbar-thumb:hover { background: var(--muted); background-clip: padding-box; }
+
+/* the canvas scrolls but shows no scrollbar at all (cards are the scrollers). */
+.mu-grid { scrollbar-width: none; } /* Firefox */
+.mu-grid::-webkit-scrollbar { width: 0; height: 0; }
 
 /* hide TradingView attribution defensively (also disabled via chart option) */
 #tv-attr-logo, a[title*="TradingView"] { display: none !important; }

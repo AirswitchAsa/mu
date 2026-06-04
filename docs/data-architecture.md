@@ -24,16 +24,26 @@
 
 A canonical dataset is described in three layers:
 
-1. **Structural kind** — *how data sits in time*. There are exactly three:
+1. **Structural kind** — *how data sits in time*. There are four:
    - **`series`** — records over a time axis, connected/interpolated when drawn (OHLCV, IV,
      realized vol, macro, fundamentals). Stored **sparse**: a row per actual observation, never
      a gap-filled grid. Low-frequency data (quarterly EPS, monthly CPI) is just a `series` with
      few rows — not a separate kind. A "current value" is the *last point* of a series, a
      `view`/render choice, not a kind. (This is why there is no `scalar` kind.)
-   - **`cross-section`** — a complete table of records at one instant (an options chain as-of T:
-     strikes × expiries × greeks). Fetched whole, written whole.
    - **`event-list`** — discrete, irregular, timestamped items (news, catalysts, filings).
-     Rendered as markers, *not* interpolated; many items may share a timestamp.
+     Rendered as markers, *not* interpolated; many items may share a timestamp. Upserted by a
+     stable **event id** (a correction overwrites; two items at the same minute both kept).
+   - **`point-in-time`** — *bitemporal* facts whose value is **revised over time**: a logical
+     row `(event, reference_period)` (e.g. `AMZN-EPS` × `2026 Q1`) carries an **expected and an
+     actual**, and each **vintage** `as_of` is a NEW row, never an overwrite — so you can ask
+     "what was knowable *as of* date D". Earnings and macro releases. The two numbers beside a
+     dated, named event are exactly why this is its own kind, distinct from a plain `event-list`.
+   - **`cross-section`** — a **snapshot of fields for one entity**, accumulating vintages: a tall
+     key-value table (`field → value`) stamped with an `as_of`, re-snapshotted on refresh
+     (company key-stats: P/E, market cap, sector, beta). The newest `as_of` is "now"; older
+     vintages are kept, so a stat's history is recoverable. *(A whole-table-per-`as_of` variant —
+     an options chain, strikes × expiries × greeks fetched and written whole — is **deferred**
+     until `options_chain` is built; it will reuse this kind's `as_of` axis or split out then.)*
 2. **Record schema** — what one element holds (see [shapes.md](./shapes.md) for the concrete
    records).
 3. **Descriptor** — a dataset's identity + context: shape + identity components + query params +
@@ -53,9 +63,12 @@ lives on the shape, never in a resource. **Merge is per kind:**
 
 | kind | merge semantics |
 |---|---|
-| `series` | union rows by **time key**, dedupe/overwrite |
-| `event-list` | union items by **event id** (not time — two articles at the same minute both kept) |
-| `cross-section` | add/overwrite whole **snapshot** keyed by **as-of**; no within-snapshot merge |
+| `series` | union rows by **time key**, dedupe/overwrite (incoming wins) |
+| `event-list` | **upsert by event id** (a correction overwrites; two items at the same minute both kept); the **time key** orders the feed |
+| `point-in-time` | **append by (event, reference_period, as_of)** — a revision is a *new vintage row*, never an overwrite; the **time key** (release time) orders the calendar; the *as-of read* returns, per logical row, the latest vintage ≤ a cutoff ("what was knowable as of D") |
+| `cross-section` | **upsert by (as_of, field)** — re-snapshotting overwrites a field inside its vintage; a new `as_of` adds a vintage; the *as-of read* returns, per field, the latest vintage ≤ a cutoff |
+
+All four run through **one generalized SQL merge** in storage (union incoming + existing → `row_number()` dedupe over the kind's keys, incoming wins → year-partitioned parquet). The kinds differ only in *which keys* they dedupe on and whether they expose an as-of read — there is no per-kind storage code path.
 
 ---
 
@@ -80,10 +93,18 @@ the configured/preferred source and returns the concrete, provider-qualified han
 ### Identity composition (per kind)
 
 ```
-series        provider : shape : entity : <resolution / metric>     tiingo:ohlcv:AMZN:1d
-event-list    provider : shape : entity                             tiingo:news:AMZN
-cross-section provider : shape : entity : as-of                     orats:options_chain:AMZN:2026-06-03
+series         provider : shape : entity : <resolution / metric>    tiingo:ohlcv:AMZN:1d
+event-list     provider : shape : entity                            finnhub:news:AMZN
+point-in-time  provider : shape : entity                            finnhub:releases:AMZN
+cross-section  provider : shape : entity                            finnhub:key_stats:AMZN
 ```
+
+For **`point-in-time`** and **`cross-section`** the vintage **`as_of` is a column, not part of the
+handle** — the dataset *accumulates* vintages under one stable handle (the same reasoning that
+keeps the query range out of the handle). *(The deferred whole-table `options_chain` variant would
+instead put `as_of` in the handle — one immutable dataset per snapshot, e.g.
+`orats:options_chain:AMZN:2026-06-03` — which is why cross-section's identity is listed without
+an as-of here.)*
 
 Exact components per shape are in [shapes.md](./shapes.md).
 
@@ -184,21 +205,25 @@ the data leaves feed `data_view` / `resolve`.
     meta.json        descriptor · provenance · freshness · rowcount   → data_list
     2024.parquet     time-partitioned bars (sparse, sorted by time)   → data_view / resolve
     2025.parquet
-<root>/<prov>/news/AMZN/
+<root>/finnhub/news/AMZN/
     meta.json
-    events.json      event-list items (json), sorted by time
-<root>/orats/options_chain/AMZN/
+    2026.parquet     event-list items, year-partitioned, sorted by published_at
+<root>/finnhub/releases/AMZN/
     meta.json
-    2026-06-03.parquet   one parquet per as-of snapshot
+    2026.parquet     point-in-time vintages (every as_of kept), sorted by release_time
+<root>/finnhub/key_stats/AMZN/
+    meta.json
+    2026.parquet     cross-section vintages (every as_of kept); newest as_of = current snapshot
 ```
 
-Per kind:
+Per kind (**all four share the one year-partitioned parquet merge path**; they differ only in dedupe keys):
 
 | kind | storage unit |
 |---|---|
-| `series` | sparse rows in a **volume-partitioned** parquet (high-freq → partition by year/month so a merge rewrites only the affected chunk; low-freq → a single small file), **sorted by time** (row-group min/max stats give efficient range scans — the "sparse index") |
-| `event-list` | items in a json (or parquet) file, sorted by time |
-| `cross-section` | **one parquet per as-of snapshot**; history-of-surface = glob the dated files |
+| `series` | sparse rows in a **year-partitioned** parquet (a merge rewrites only the affected year; low-freq → a single small file), **sorted by time** (row-group min/max stats give efficient range scans — the "sparse index") |
+| `event-list` | rows in a year-partitioned parquet (by `published_at`), upserted by **id** |
+| `point-in-time` | vintage rows in a year-partitioned parquet (by `release_time`), keyed **(event, reference, as_of)** — every vintage kept |
+| `cross-section` | vintage rows in a year-partitioned parquet (by `as_of`), keyed **(as_of, field)** — every vintage kept; the newest `as_of` is the live snapshot |
 
 - **One shared store (resolved):** a single root `<root>/<provider>/<shape>/…`, one directory
   per handle, shared across all sessions — **no per-session tier**. Data is fetched once and
@@ -259,5 +284,7 @@ Both terminate in the same `ingest`; cadence is just a different trigger of the 
   over-broad reads; the exact numeric budget is deliberately deferred. Per-shape merge mechanics
   are specified in [spec/](./spec/) (per-kind merge behaviors).
 - **First concrete shapes** are catalogued in [shapes.md](./shapes.md) as **v0** — they refine as
-  the renderers are built. Point-in-time fundamentals (`period` + `report_date`) is deferred until
-  a no-lookahead window needs it.
+  the renderers are built. Point-in-time is now **built** (`releases`: earnings + macro, the
+  bitemporal kind), and `cross-section` is **built** as the accumulating key-value snapshot
+  (`key_stats`). Still deferred: `metric` (single-value series), the whole-table `options_chain`
+  cross-section variant, and a true ALFRED vintage backfill (today vintages accrue via refresh).

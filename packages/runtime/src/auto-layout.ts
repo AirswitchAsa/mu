@@ -21,6 +21,7 @@ const DEFAULT_SIZE: Record<string, { colSpan: number; rowSpan: number }> = {
   memo: { colSpan: 1, rowSpan: 2 }, // M
   news: { colSpan: 1, rowSpan: 2 }, // M
   releases: { colSpan: 1, rowSpan: 2 }, // M
+  key_stats: { colSpan: 1, rowSpan: 2 }, // M
   news_timeline: { colSpan: 1, rowSpan: 2 }, // M
 };
 

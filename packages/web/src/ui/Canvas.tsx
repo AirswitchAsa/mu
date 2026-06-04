@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import type { CanvasState, Placement } from "@mu/protocol";
 import { colsForWidth, DEFAULT_SIZE_INDEX, presetForSize } from "../lib/grid";
-import type { OhlcvRow } from "../lib/types";
+import type { DataMap } from "../lib/types";
 import type { RenderTheme } from "../renderers/types";
 import { ErrorBoundary } from "./ErrorBoundary";
 import { GridCard } from "./GridCard";
@@ -19,7 +19,7 @@ const GRID_GAP = 16;
 
 export function Canvas(props: {
   manifest: CanvasState | null;
-  data: Map<string, OhlcvRow[]>;
+  data: DataMap;
   dataVersion: number;
   theme: RenderTheme;
   themeKey: string;

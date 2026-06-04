@@ -1,5 +1,5 @@
 import type { CanvasOp, CanvasState, ChatMessage, RendererManifest } from "@mu/protocol";
-import type { MuStreamEvent, OhlcvRow } from "./types";
+import type { DataRow, MuStreamEvent } from "./types";
 
 // =============================================================================
 // µ — backend client. The contract is docs/backend-api.md (REST + SSE, CORS-open).
@@ -36,14 +36,43 @@ export async function getMessages(id: string): Promise<ChatMessage[]> {
   return (await jsonOf<{ messages: ChatMessage[] }>(await fetch(`${BASE}/api/sessions/${id}/messages`))).messages;
 }
 
+/** opencode's auto-generated session title (undefined if unset / no driver). */
+export async function sessionTitle(id: string): Promise<string | undefined> {
+  try {
+    const r = await fetch(`${BASE}/api/sessions/${id}/title`);
+    if (!r.ok) return undefined;
+    const { title } = (await r.json()) as { title?: string | null };
+    return title ?? undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 export async function listRenderers(): Promise<RendererManifest[]> {
   return (await jsonOf<{ renderers: RendererManifest[] }>(await fetch(`${BASE}/api/renderers`))).renderers;
 }
 
-/** Full data for a renderer (server-side, unguarded). Rows have epoch-ms `t`. */
-export async function resolveHandle(handle: string): Promise<OhlcvRow[]> {
+/** Full data for a renderer (server-side, unguarded). Rows are shape-specific. */
+export async function resolveHandle(handle: string): Promise<DataRow[]> {
   const r = await fetch(`${BASE}/api/resolve?handle=${encodeURIComponent(handle)}`);
-  return (await jsonOf<{ handle: string; rows: OhlcvRow[] }>(r)).rows;
+  return (await jsonOf<{ handle: string; rows: DataRow[] }>(r)).rows;
+}
+
+/**
+ * Manually re-acquire bound handles from their sources (the global refresh). With
+ * no `handles`, the server refreshes every data-backed handle in the session.
+ * Returns which handles were refreshed so the client re-resolves exactly those.
+ */
+export async function refreshSession(
+  id: string,
+  handles?: string[],
+): Promise<{ refreshed: string[]; errors: { handle: string; code?: string; message: string }[] }> {
+  const r = await fetch(`${BASE}/api/sessions/${id}/refresh`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(handles ? { handles } : {}),
+  });
+  return jsonOf<{ refreshed: string[]; errors: { handle: string; code?: string; message: string }[] }>(r);
 }
 
 /** User layout/content edits (move/resize/...). The server stays authoritative. */

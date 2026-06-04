@@ -46,11 +46,8 @@ export function parseModel(model: string): { providerID: string; modelID: string
   return { providerID: model.slice(0, idx), modelID: model.slice(idx + 1) };
 }
 
-function extractAssistantText(result: unknown): string {
-  const data = (result as { data?: unknown }).data ?? result;
-  const parts =
-    (data as { parts?: unknown[] }).parts ??
-    ((data as { info?: { parts?: unknown[] } }).info?.parts ?? []);
+/** Join the text parts of one message (ignoring tool/file/etc. parts). */
+function textOfParts(parts: unknown): string {
   if (!Array.isArray(parts)) return "";
   return parts
     .filter((p): p is { type: string; text: string } => {
@@ -59,6 +56,14 @@ function extractAssistantText(result: unknown): string {
     })
     .map((p) => p.text)
     .join("");
+}
+
+function extractAssistantText(result: unknown): string {
+  const data = (result as { data?: unknown }).data ?? result;
+  const parts =
+    (data as { parts?: unknown[] }).parts ??
+    ((data as { info?: { parts?: unknown[] } }).info?.parts ?? []);
+  return textOfParts(parts);
 }
 
 /**
@@ -135,9 +140,24 @@ export class OpencodeDriver {
   }
 
   /**
+   * opencode auto-generates a session `title` from the conversation (via its small
+   * summary model). Surface it so µ can name the session for the user. Returns
+   * undefined if unset/blank or the lookup fails — the caller keeps its own name.
+   */
+  async getSessionTitle(id: string): Promise<string | undefined> {
+    try {
+      const result = await this.client.session.get({ path: { id } });
+      const title = (result as { data?: { title?: string } }).data?.title;
+      return title && title.trim().length > 0 ? title.trim() : undefined;
+    } catch {
+      return undefined;
+    }
+  }
+
+  /**
    * Send a user message (command). `extraParts` carries the appended canvas summary
-   * (inject_canvas_state). Returns the assistant's final text; canvas ops the agent
-   * emits flow through the tool callback, not this return value (CQRS).
+   * (inject_canvas_state). Returns the assistant's text for the WHOLE turn; canvas
+   * ops the agent emits flow through the tool callback, not this return value (CQRS).
    */
   async prompt(sessionId: string, text: string, extraParts: string[] = []): Promise<string> {
     const parts = [text, ...extraParts].map((t) => ({ type: "text" as const, text: t }));
@@ -146,7 +166,33 @@ export class OpencodeDriver {
       body: { parts, model: parseModel(this.model) },
     });
     const result = this.timeoutMs > 0 ? await withTimeout(call, this.timeoutMs) : await call;
-    return extractAssistantText(result);
+    // `prompt` returns only the FINAL assistant message, but opencode emits a
+    // separate message per step — text the agent wrote *before* a tool call lives
+    // in an earlier message. Collect every assistant message in the turn so none of
+    // it is dropped (the "later block overwrites the earlier" bug). Fall back to the
+    // returned message if the listing is unavailable.
+    return (await this.collectTurnText(sessionId)) || extractAssistantText(result);
+  }
+
+  /** Concatenate every assistant message produced after the last user message. */
+  private async collectTurnText(sessionId: string): Promise<string> {
+    try {
+      const res = await this.client.session.messages({ path: { id: sessionId } });
+      const items = ((res as { data?: unknown }).data ?? res) as Array<{ info?: { role?: string }; parts?: unknown }>;
+      if (!Array.isArray(items)) return "";
+      let lastUser = -1;
+      items.forEach((m, i) => {
+        if (m.info?.role === "user") lastUser = i;
+      });
+      return items
+        .slice(lastUser + 1)
+        .filter((m) => m.info?.role === "assistant")
+        .map((m) => textOfParts(m.parts))
+        .filter((t) => t.length > 0)
+        .join("\n\n");
+    } catch {
+      return "";
+    }
   }
 
   close(): void {

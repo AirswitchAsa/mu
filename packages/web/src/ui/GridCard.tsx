@@ -2,12 +2,14 @@ import { useEffect, useRef } from "react";
 import type { Placement, Window } from "@mu/protocol";
 import { lastClose, pctChange } from "../lib/indicators";
 import { presetForSize, SIZE_LABELS, sizeIndexOf, MAX_SIZE } from "../lib/grid";
+import { mergeNews } from "../lib/cards";
 import { compareBase, symbolOf } from "../lib/specs";
-import type { OhlcvRow } from "../lib/types";
+import type { DataMap, KeyStatsRow, NewsRow, OhlcvRow, ReleaseRow } from "../lib/types";
 import { getRenderer } from "../renderers/registry";
 import type { RenderContext, RendererInstance, RenderTheme } from "../renderers/types";
 import { NewsCard } from "./cards/News";
 import { ReleasesCard } from "./cards/Releases";
+import { KeyStatsCard } from "./cards/KeyStats";
 
 // =============================================================================
 // µ — a grid card: a drag-handle bar (grip · title · handle · sizer · close) over
@@ -16,9 +18,9 @@ import { ReleasesCard } from "./cards/Releases";
 // occupies grid cells; the board flows from each card's size (no free-floating).
 // =============================================================================
 
-function WinLegend({ win, data }: { win: Window; data: Map<string, OhlcvRow[]> }): JSX.Element | null {
+function WinLegend({ win, data }: { win: Window; data: DataMap }): JSX.Element | null {
   if (win.type === "price_chart" && win.bindings[0]) {
-    const rows = data.get(win.bindings[0]) ?? [];
+    const rows = (data.get(win.bindings[0]) ?? []) as unknown as OhlcvRow[];
     const chg = pctChange(rows);
     const up = chg >= 0;
     return (
@@ -38,7 +40,7 @@ function WinLegend({ win, data }: { win: Window; data: Map<string, OhlcvRow[]> }
     return (
       <div className="mu-legend">
         {win.bindings.map((h, i) => {
-          const chg = pctChange(data.get(h) ?? []);
+          const chg = pctChange((data.get(h) ?? []) as unknown as OhlcvRow[]);
           return (
             <span className="mu-legend__key" data-series={i === 0 ? "a" : "b"} key={h}>
               {symbolOf(h)} {chg >= 0 ? "+" : ""}
@@ -56,7 +58,7 @@ function WinLegend({ win, data }: { win: Window; data: Map<string, OhlcvRow[]> }
 /** Mounts an imperative renderer plugin (charts/memo) and reconciles it on change. */
 function RendererMount(props: {
   win: Window;
-  data: Map<string, OhlcvRow[]>;
+  data: DataMap;
   dataVersion: number;
   theme: RenderTheme;
 }): JSX.Element {
@@ -67,7 +69,8 @@ function RendererMount(props: {
   const ctx = (): RenderContext => ({
     spec: win.spec,
     handles: [...win.bindings],
-    data: new Map(win.bindings.map((h) => [h, data.get(h) ?? []])),
+    // charts consume ohlcv rows; the shared cache is untyped, cast at the boundary.
+    data: new Map(win.bindings.map((h) => [h, (data.get(h) ?? []) as unknown as OhlcvRow[]])),
     theme,
   });
 
@@ -104,14 +107,24 @@ function RendererMount(props: {
 
 function CardBody(props: {
   win: Window;
-  data: Map<string, OhlcvRow[]>;
+  data: DataMap;
   dataVersion: number;
   theme: RenderTheme;
   themeKey: string;
 }): JSX.Element {
-  const { win } = props;
-  if (win.type === "news") return <NewsCard />;
-  if (win.type === "releases") return <ReleasesCard />;
+  const { win, data } = props;
+  if (win.type === "news") {
+    const items = mergeNews(win.bindings.map((h) => (data.get(h) ?? []) as unknown as NewsRow[]));
+    return <NewsCard items={items} now={Date.now()} />;
+  }
+  if (win.type === "releases") {
+    const rows = win.bindings.flatMap((h) => (data.get(h) ?? []) as unknown as ReleaseRow[]);
+    return <ReleasesCard rows={rows} now={Date.now()} />;
+  }
+  if (win.type === "key_stats") {
+    const rows = win.bindings.flatMap((h) => (data.get(h) ?? []) as unknown as KeyStatsRow[]);
+    return <KeyStatsCard rows={rows} now={Date.now()} />;
+  }
   const isChart = win.type === "price_chart" || win.type === "compare";
   return (
     <>
@@ -131,7 +144,7 @@ export function GridCard(props: {
   win: Window;
   placement: Placement;
   cols: number;
-  data: Map<string, OhlcvRow[]>;
+  data: DataMap;
   dataVersion: number;
   theme: RenderTheme;
   themeKey: string;

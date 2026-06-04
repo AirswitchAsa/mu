@@ -1,93 +1,61 @@
-import { useCallback, useRef, useState } from "react";
-import { relAgo } from "../../lib/timefmt";
-import { NEWS_FEED, type NewsItem } from "./sampleData";
+import { splitTickers } from "../../lib/cards";
+import { agoLabel } from "../../lib/timefmt";
+import type { NewsRow } from "../../lib/types";
 
 // =============================================================================
-// µ — news wire card. A scrolling headline feed: source · timestamp · tickers,
-// sentence-case headline, optional monochrome thumbnail with a sentiment spark.
-// v0 renders a baked sample wire (looped to fake an "infinite" stream); a live
-// `news` data plane is deferred — see ui/cards/sampleData.ts.
+// µ — news wire card. A reverse-chronological headline feed over one or more bound
+// `news` handles (interleaved by the parent): source · time · tickers, headline,
+// optional summary. Each item is labeled with its source — aggregate freely, no
+// cross-source dedup. Reads resolved rows (no baked data).
 // =============================================================================
 
-function NewsThumb({ label, kind }: { label: string; kind?: NewsItem["kind"] }): JSX.Element {
-  const d =
-    kind === "down"
-      ? "M0 6 L16 11 L32 9 L48 18 L64 20"
-      : kind === "up"
-        ? "M0 19 L16 14 L32 16 L48 7 L64 4"
-        : "M0 12 L16 9 L32 14 L48 10 L64 12";
-  return (
-    <div className="mu-news__thumb" data-kind={kind ?? "flat"} aria-hidden="true">
-      <span className="mu-news__thumblabel">{label}</span>
-      <svg className="mu-news__spark" viewBox="0 0 64 24" preserveAspectRatio="none">
-        <path d={d} fill="none" stroke="currentColor" strokeWidth="1.5" />
-      </svg>
-    </div>
+function NewsRowView({ item, now }: { item: NewsRow; now: number }): JSX.Element {
+  const tickers = splitTickers(item.tickers);
+  const head = item.url ? (
+    <a className="mu-news__headlink" href={item.url} target="_blank" rel="noopener noreferrer">
+      {item.headline}
+    </a>
+  ) : (
+    item.headline
   );
-}
-
-function NewsRow({ item }: { item: NewsItem }): JSX.Element {
   return (
     <article className="mu-news__item">
-      {item.thumb && <NewsThumb label={item.thumb} kind={item.kind} />}
       <div className="mu-news__col">
         <div className="mu-news__meta">
           <span className="mu-news__src">{item.source}</span>
           <span className="ds-dot" />
-          <span className="mu-news__time">{relAgo(item.mins)}</span>
-          {item.tickers.map((t) => (
+          <span className="mu-news__time">{agoLabel(item.published_at, now)}</span>
+          {tickers.map((t) => (
             <span key={t} className="mu-news__tick">
               {t}
             </span>
           ))}
         </div>
-        <h4 className="mu-news__head">{item.headline}</h4>
+        <h4 className="mu-news__head">{head}</h4>
         {item.summary && <p className="mu-news__sum">{item.summary}</p>}
       </div>
     </article>
   );
 }
 
-const MAX_ITEMS = 60;
-
-export function NewsCard(): JSX.Element {
-  const [count, setCount] = useState(NEWS_FEED.length);
-  const scrollRef = useRef<HTMLDivElement>(null);
-
-  // loop the seed feed as the user nears the bottom → an endless-feeling wire.
-  const onScroll = useCallback(() => {
-    const el = scrollRef.current;
-    if (!el) return;
-    if (el.scrollTop + el.clientHeight >= el.scrollHeight - 120) {
-      setCount((c) => Math.min(MAX_ITEMS, c + NEWS_FEED.length));
-    }
-  }, []);
-
-  const items: (NewsItem & { _k: string })[] = [];
-  for (let i = 0; i < count; i++) {
-    const base = NEWS_FEED[i % NEWS_FEED.length]!;
-    const loop = Math.floor(i / NEWS_FEED.length); // shift repeats older
-    items.push({ ...base, mins: base.mins + loop * 540, _k: `${base.id}:${i}` });
-  }
-
+export function NewsCard({ items, now }: { items: NewsRow[]; now: number }): JSX.Element {
+  // "updated" = the freshness of the wire's content (its newest headline). There is
+  // no streaming; the data is as recent as the last fetch/refresh, so the newest item
+  // is the honest freshness signal (replaces the old always-on cosmetic "live" badge).
+  const newest = items.length ? Math.max(...items.map((it) => it.published_at)) : undefined;
   return (
     <div className="mu-news">
       <div className="mu-news__bar">
-        <span className="mu-news__live ds-spec">
-          <span className="ds-dot" />
-          live
+        <span className="mu-news__updated ds-spec">
+          {newest !== undefined ? `updated ${agoLabel(newest, now)}` : "no data"}
         </span>
-        <span className="ds-spec">{count} headlines</span>
+        <span className="ds-spec">{items.length} headlines</span>
       </div>
-      <div className="mu-news__list" ref={scrollRef} onScroll={onScroll}>
-        {items.map((it) => (
-          <NewsRow key={it._k} item={it} />
-        ))}
-        {count < MAX_ITEMS && (
-          <div className="mu-news__more ds-spec">
-            <span className="ds-loading__dot" />
-            loading wire
-          </div>
+      <div className="mu-news__list">
+        {items.length === 0 ? (
+          <div className="mu-news__more ds-spec">no headlines yet — bind a news feed and refresh</div>
+        ) : (
+          items.map((it) => <NewsRowView key={`${it.source}:${it.id}`} item={it} now={now} />)
         )}
       </div>
     </div>

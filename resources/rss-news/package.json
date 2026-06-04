@@ -1,0 +1,26 @@
+{
+  "name": "@mu-resource/rss-news",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "First-party µ resource(s): no-key news via RSS — Yahoo Finance (per-ticker) + CNBC (general wires).",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "types": "./dist/index.d.ts",
+  "main": "./dist/index.js",
+  "mu": {
+    "kind": "resource"
+  },
+  "files": ["dist"],
+  "scripts": {
+    "build": "tsc --build"
+  },
+  "dependencies": {
+    "@mu/protocol": "workspace:*",
+    "@mu/resource-sdk": "workspace:*"
+  }
+}

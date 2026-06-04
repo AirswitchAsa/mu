@@ -70,7 +70,6 @@ function Thinking({ ops }: { ops?: TraceLine[] }): JSX.Element {
 
 export function Chat(props: {
   name: string;
-  status: string;
   chat: ChatTurn[];
   thinking: boolean;
   pendingOps?: TraceLine[];
@@ -79,7 +78,7 @@ export function Chat(props: {
   inputRef?: React.RefObject<HTMLTextAreaElement>;
   onSend: (text: string) => void;
 }): JSX.Element {
-  const { name, status, chat, thinking, pendingOps, width, disabled, inputRef, onSend } = props;
+  const { name, chat, thinking, pendingOps, width, disabled, inputRef, onSend } = props;
   const [draft, setDraft] = useState("");
   const scrollRef = useRef<HTMLDivElement>(null);
   const localRef = useRef<HTMLTextAreaElement>(null);
@@ -109,10 +108,6 @@ export function Chat(props: {
     <aside className="mu-chat" style={{ width }}>
       <header className="mu-chat__head">
         <span className="mu-chat__name">{name}</span>
-        <span className="mu-chat__status ds-spec" data-status={status}>
-          <span className="ds-dot"></span>
-          {status}
-        </span>
       </header>
 
       <div className="mu-chat__stream" ref={scrollRef}>

@@ -4,12 +4,13 @@
 // list lives here; a stale id (server restart) is re-created on demand.
 // =============================================================================
 
-export type SessionStatus = "live" | "idle" | "empty";
-
 export interface SessionMeta {
   id: string;
   name: string;
-  status: SessionStatus;
+  /** an assistant reply arrived while this session wasn't active; cleared on open. */
+  unread?: boolean;
+  /** the user manually renamed it — stop syncing the name from opencode's title. */
+  renamed?: boolean;
 }
 
 const KEY = "mu.sessions";

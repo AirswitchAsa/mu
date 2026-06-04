@@ -8,8 +8,9 @@
 
 ## Conventions
 
-- **Time** is **epoch milliseconds, UTC**, everywhere (`t`). Trading-calendar and timezone
-  concerns live in the renderer, not in stored data.
+- **Time** is **epoch milliseconds, UTC**, everywhere. The *time-key column* is named per shape
+  (`t` for series, `published_at` for news, `release_time` for releases, `as_of` for key_stats).
+  Trading-calendar and timezone concerns live in the renderer, not in stored data.
 - **Provider** is part of every handle; `fetch` defaults it. Handles use `:` delimiters and map
   to on-disk paths (see [data-architecture §3](./data-architecture.md)).
 - Each entry below gives: **kind · record schema · identity · query params · merge key · storage**.
@@ -69,22 +70,89 @@ macro levels, and simple single-number fundamentals — they differ by *identity
 
 ---
 
-## `news` — news / catalysts
+## `news` — news / catalysts *(built)*
 
-- **window:** news timeline
+- **window:** `news` wire
 - **kind:** `event-list`
-- **record (one item):** `{ id, t, headline, url?, source?, sentiment?, symbols? }`
-- **identity:** `provider : news : entity` — e.g. `tiingo:news:AMZN`
+- **record (one item):**
+  `{ id, published_at, source, headline, summary?, url?, tickers?, image_url?, sentiment? }`
+  - `published_at` is epoch-ms UTC; `tickers` is a comma-joined symbol list (`"AMZN,MSFT"`) stored
+    as one column and split by the client.
+- **identity:** `provider : news : entity` — e.g. `finnhub:news:AMZN`, `yahoo:news:AMZN`,
+  `cnbc:news:markets` (for general feeds `entity` is a feed slug, e.g. `markets`/`top`)
 - **query params:** `start` / `end` / `range`
-- **merge key:** `id` (event id — two distinct items at the same `t` are both kept)
-- **storage:** json (or json-lines) of items, sorted by `t`
+- **merge key:** `id` (a re-fetch of the same article is a no-op; a correction overwrites);
+  `published_at` orders the feed
+- **storage:** year-partitioned parquet, sorted by `published_at`
 
 ---
 
+## `releases` — release calendar (point-in-time) *(built)*
+
+- **window:** `releases` calendar
+- **kind:** `point-in-time` (bitemporal)
+- **record (one vintage):**
+  `{ event, name, reference_period, as_of, release_time, status, forecast?, actual?, previous?, unit?, importance? }`
+  - the logical row is `(event, reference_period)` — e.g. `AMZN-EPS` × `2026 Q1`; `as_of` is when
+    this vintage became known. `forecast`/`actual` are real numbers (the expected-vs-actual pair);
+    `status ∈ scheduled|released|revised`; `release_time` orders the calendar.
+- **identity:** `provider : releases : entity` — e.g. `finnhub:releases:AMZN` (earnings),
+  `fred:releases:GDP` (macro). `as_of` is a **column, not** in the handle.
+- **query params:** `entity` (`asOf` cutoff on the read side)
+- **merge key:** `(event, reference_period, as_of)` — a revision is a *new vintage*, never an
+  overwrite; the as-of read returns the latest vintage ≤ a cutoff
+- **storage:** year-partitioned parquet (by `release_time`), every vintage kept
+- **what belongs here:** anything with a **release date + an expected/actual** — EPS, revenue,
+  dividends, guidance, macro prints. *Not* continuously-moving or static facts (those are
+  `key_stats`).
+
+---
+
+## `key_stats` — company key statistics (cross-section) *(built)*
+
+- **window:** `key_stats` panel
+- **kind:** `cross-section` (accumulating snapshot)
+- **record (one stat):** `{ field, label, value, as_of, group? }`
+  - `field` is the machine id (e.g. `peTTM`) — the within-snapshot row identity; `label` is the
+    reader-friendly name (`"P/E (TTM)"`); `value` is a **display-ready string** (so a `42.3`, a
+    `"$2.10T"`, and a `"Technology"` coexist in one column); `group` buckets the panel
+    (`valuation`/`trading`/`profile`); `as_of` is the vintage.
+- **identity:** `provider : key_stats : entity` — e.g. `finnhub:key_stats:AMZN`. `as_of` is a
+  **column, not** in the handle (vintages accumulate under one handle).
+- **query params:** `entity` (`asOf` cutoff on the read side)
+- **merge key:** `(as_of, field)` — re-snapshotting overwrites a field within its vintage; a new
+  `as_of` adds a vintage; the card shows the newest `as_of`
+- **storage:** year-partitioned parquet (by `as_of`), every vintage kept
+- **what belongs here:** **continuously-moving or static descriptive facts** — market cap, P/E,
+  forward P/E, beta, 52-week range, dividend yield, sector, shares outstanding. *Not* dated
+  expected/actual events (those are `releases`).
+
+---
+
+## Card ↔ shape map (the binding contract)
+
+A renderer binds to a **shape, never a provider**. The agent picks the card by the *question*,
+then fetches a matching shape and binds. This table is the source of truth (mirrored in each
+renderer's `description` for `renderer_list`):
+
+| card (`window.type`) | requires shape | answers | sources (examples) |
+|---|---|---|---|
+| `price_chart` | `ohlcv` | "how has price moved?" + indicators | yahoo |
+| `compare` | `ohlcv` (≥2) | "how do these move relative to each other?" | yahoo |
+| `news` | `news` | "what's being said / catalysts?" | yahoo, cnbc, finnhub |
+| `releases` | `releases` | "what's expected vs what printed, by date?" | finnhub (earnings), fred (macro) |
+| `key_stats` | `key_stats` | "what *is* this company right now?" | finnhub |
+| `memo` | — | agent-authored prose, no data | — |
+
+**Routing rule:** a fact with a *release date and an expected/actual* → `releases`; a
+*continuously-moving or static descriptive* fact → `key_stats`; a *time path you want to chart* →
+`series` (ohlcv today). This is what keeps P/E out of the calendar and EPS out of the stats panel.
+
 ## Deferred (not v0)
 
-- **Point-in-time fundamentals** — a `series` variant carrying both `period` (fiscal) and
-  `report_date` (when the value became known), so backtests/factor work avoid lookahead. Minted
-  when a no-lookahead window needs it; until then, simple fundamentals ride on `metric`.
-- **Panel** (`cross-section` over time, e.g. the term structure as a single addressable object) —
-  for now, assembled by globbing `cross-section` snapshots.
+- **`metric`** (single-value numeric `series` — IV rank, realized vol, macro levels charted over
+  time) — minted when an indicator chart needs it; until then macro actuals ride on `releases`.
+- **`options_chain`** (the whole-table-per-`as_of` `cross-section` variant) — strikes × expiries ×
+  greeks, fetched and written whole; needs ORATS.
+- **Panel** (`cross-section` over time as one addressable object, e.g. the term structure) — for
+  now history is assembled by globbing vintages.

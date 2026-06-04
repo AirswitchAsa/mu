@@ -21,13 +21,17 @@ and `!apply_canvas_op`; the `#Renderer` resolves them through `!resolve`.
 - **provider** — first component; part of identity because different providers
   are genuinely different data (adjusted vs. raw closes, split handling),
   preventing unsafe cross-provider merges by construction.
-- **shape** — second component; the shape id (`ohlcv`, `metric`,
-  `options_chain`, `news`) the dataset conforms to (see `#Shape`).
+- **shape** — second component; the shape id (`ohlcv`, `news`, `releases`,
+  `key_stats`; deferred `metric`/`options_chain`) the dataset conforms to (see
+  `#Shape`).
 - **entity** — third component; upper-cased (e.g. `AMZN`). The dot is literal,
   so `BRK.B` needs no special-casing — why `:` was chosen over `.`.
 - **kind-specific tail** — per structural kind: `series` →
-  `… : entity : <resolution|metricId[:resolution]>`; `event-list` →
-  `… : entity`; `cross-section` → `… : entity : asOf`.
+  `… : entity : <resolution|metricId[:resolution]>`; `event-list`,
+  `point-in-time`, `cross-section` → `… : entity` (the vintage `as_of` is a
+  **column, not** in the handle — vintages accumulate under one handle). *(The
+  deferred whole-table `options_chain` variant is the exception: `… : entity : asOf`,
+  one dataset per snapshot.)*
 
 ## Notes
 

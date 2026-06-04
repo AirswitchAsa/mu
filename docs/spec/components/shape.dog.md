@@ -6,16 +6,18 @@ A **shape** is the unit that owns the generic behavior identical across every
 source of a data type — the inversion of "resources are thin, shapes are smart"
 (data-architecture.md §2). Not a running service but a registered bundle of pure
 functions keyed by shape id, dispatched by the `#DataBroker`. Each shape declares
-its **structural kind** (`series`, `event-list`, `cross-section`) and implements
-**validate** (the `!ingest` gate), **view/summary** (for `!data_view`), and
-**merge** (per kind: `!merge_series` / `!merge_event_list` /
-`!merge_cross_section`).
+its **structural kind** (`series`, `event-list`, `point-in-time`, `cross-section`)
+and implements **validate** (the `!ingest` gate), **view/summary** (for
+`!data_view`), and **merge** (per kind: `!merge_series` / `!merge_event_list` /
+point-in-time / `!merge_cross_section` — all run by one generalized SQL merge that
+differs only in dedupe keys).
 
 The shape id is the lingua franca: `#Resource`s declare the shape they produce,
 `#Renderer`s declare the shape they require (`&RendererManifest`), and validation
 at `!ingest` *is* the "data fits the chart" guarantee. The v0 catalogue
-(`ohlcv`, `metric`, `options_chain`, `news`) lives in shapes.md; new shapes are
-minted on demand (dashboard-first).
+(built: `ohlcv` series, `news` event-list, `releases` point-in-time, `key_stats`
+cross-section; deferred: `metric`, `options_chain`) lives in shapes.md; new shapes
+are minted on demand (dashboard-first).
 
 ## State
 

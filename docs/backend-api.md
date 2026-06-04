@@ -34,6 +34,7 @@ with `code` from the typed set (`VALIDATION_FAILED`, `HANDLE_NOT_FOUND`,
 |---|---|---|---|
 | `GET` | `/api/sessions/:id/canvas` | — | `CanvasState`: `{ id, windows[], layout, focusedWindowId? }` |
 | `GET` | `/api/sessions/:id/messages` | — | `{ messages: ChatMessage[] }` — chat history for reload-restore (`{ role, text, at }`) |
+| `GET` | `/api/sessions/:id/title` | — | `{ title: string \| null }` — opencode's auto-generated session title (null if unset / no driver) |
 | `POST` | `/api/sessions/:id/canvas/ops` | `{ ops: CanvasOp[] }` | `{ summary }` — **user** ops (incl. `move`/`resize`/`reorder`) |
 
 `Window`: `{ id, type, title, spec, bindings: Handle[], provenanceRefs }`.

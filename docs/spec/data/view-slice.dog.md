@@ -13,7 +13,9 @@ default summary instead of rows.
   restrict to records in range.
 - **last?** — integer N: the most recent N records (the common "latest close /
   five headlines" case).
-- **asOf?** — for `cross-section`: which snapshot to read (defaults to latest).
+- **asOf?** — for `point-in-time`/`cross-section`: a vintage cutoff (epoch-ms) —
+  returns, per logical row, the latest vintage ≤ the cutoff ("as knowable as of D").
+  Defaults to latest.
 - **filter?** — shape-specific narrowing (e.g. one expiry of an options chain;
   a strike band).
 - **fields?** — project a subset of record fields to shrink the response.

@@ -14,14 +14,18 @@ directory path *is* the `&Handle` with `:` replaced by `/` (`!encode_handle`).
   one directory per `&Handle`. There is **no `shared`/`session` split** — all
   data is shared (see `#DataBroker`), so a handle maps to exactly one directory
   for the whole instance.
-- **per-kind layout:**
-  - `series` → volume-partitioned parquet (high-freq partitioned by year/month
-    so a merge rewrites only the affected chunk; low-freq a single small file),
-    **sorted by `t`** (row-group min/max stats give range-scan efficiency — the
-    "sparse index").
-  - `event-list` → a json (or json-lines) file of items, sorted by `t`.
-  - `cross-section` → **one parquet per `asOf` snapshot**; the directory of
-    dated files *is* the surface history.
+- **per-kind layout** (one generalized merge → **year-partitioned parquet** for
+  every kind; kinds differ only in dedupe keys + time key):
+  - `series` → rows deduped by `t`, **sorted by `t`** (row-group min/max stats give
+    range-scan efficiency — the "sparse index"); a merge rewrites only the affected
+    year.
+  - `event-list` → rows upserted by `id`, sorted by `published_at`.
+  - `point-in-time` → vintage rows keyed `(event, reference, as_of)` — every vintage
+    kept — sorted by `release_time`; the as-of read returns the latest vintage ≤ a
+    cutoff.
+  - `cross-section` → vintage rows keyed `(as_of, field)` — every vintage kept —
+    sorted by `as_of`; the newest `as_of` is the live snapshot. *(Deferred whole-table
+    `options_chain` variant: one parquet per `asOf`, `asOf` in the handle.)*
 - **meta.json** — the `&MetaJson` sidecar in every dataset directory.
 
 ## Events

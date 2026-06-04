@@ -2,7 +2,7 @@
   "name": "mu",
   "version": "0.0.0",
   "private": true,
-  "description": "A session-driven generative-UI playground for financial research.",
+  "description": "A generative-UI playground for financial research.",
   "license": "AGPL-3.0-only",
   "type": "module",
   "engines": {

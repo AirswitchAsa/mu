@@ -70,15 +70,11 @@ export class DataBroker {
         .join("; ");
       throw new MuErrorException("VALIDATION_FAILED", `payload failed ${shape.id} schema: ${detail}`);
     }
-    if (shape.kind !== "series") {
-      throw new MuErrorException("VALIDATION_FAILED", `kind '${shape.kind}' not implemented in v0`);
-    }
-
     const handle = encodeHandle(descriptor.identity);
 
     return this.locks.runExclusive(handle, async () => {
       await this.storage.sweepTmp(handle);
-      await this.storage.mergeSeries(handle, shape, payload);
+      await this.storage.merge(handle, shape, payload);
 
       const summary = await this.summaryOf(handle, shape);
       const meta: MetaJson = {
@@ -138,5 +134,11 @@ export class DataBroker {
   /** The dataset half of data_list — meta only, never the data leaves. */
   async list(): Promise<MetaJson[]> {
     return this.storage.listMeta();
+  }
+
+  /** One dataset's meta.json (descriptor/provenance/freshness), or null if absent.
+   *  Used by refresh to reconstruct the original fetch from a handle. */
+  async describe(handle: Handle): Promise<MetaJson | null> {
+    return this.storage.readMeta(handle);
   }
 }

@@ -40,9 +40,9 @@ export function validateMemoSpec(spec: Record<string, unknown>): ValidationResul
 }
 
 /**
- * news spec — a scrolling wire feed. `query` scopes the feed (e.g. a ticker or
- * theme). v0 renders from a baked sample wire client-side; the live `news` shape +
- * resource (real headlines, images) is deferred — see docs/spec/components/renderer.dog.md.
+ * news spec — a scrolling wire feed over bound `news` handles. Optional `query`
+ * scopes/labels the wire; `limit` caps headlines. The card interleaves all bound
+ * handles by time and labels each item's source.
  */
 export function validateNewsSpec(spec: Record<string, unknown>): ValidationResult {
   if (spec["query"] !== undefined && typeof spec["query"] !== "string") return fail("query", "must be a string");
@@ -53,12 +53,21 @@ export function validateNewsSpec(spec: Record<string, unknown>): ValidationResul
 }
 
 /**
- * releases spec — a point-in-time release calendar (a vintage timeline: as-of
- * timestamp + reference period, released/revised/scheduled status, actual vs
- * forecast). `scope` filters the calendar (e.g. "macro"). v0 renders from a baked
- * sample calendar; the live point-in-time `releases` shape + resource is deferred.
+ * releases spec — a point-in-time release calendar over bound `releases` handles
+ * (a vintage timeline: reference period, scheduled/released/revised status, actual
+ * vs forecast). Optional `scope` labels the calendar.
  */
 export function validateReleasesSpec(spec: Record<string, unknown>): ValidationResult {
+  if (spec["scope"] !== undefined && typeof spec["scope"] !== "string") return fail("scope", "must be a string");
+  return OK;
+}
+
+/**
+ * key_stats spec — a company key-statistics panel over a bound `key_stats` handle
+ * (cross-section): a snapshot of valuation / trading / profile fields. Optional
+ * `scope` labels the panel.
+ */
+export function validateKeyStatsSpec(spec: Record<string, unknown>): ValidationResult {
   if (spec["scope"] !== undefined && typeof spec["scope"] !== "string") return fail("scope", "must be a string");
   return OK;
 }
@@ -115,14 +124,13 @@ export const coreRenderers: RendererDef[] = [
     manifest: {
       type: "news",
       specSchema: {
-        query: "string — scopes the wire (a ticker or theme)",
+        query: "string — optional label/scope for the wire",
         limit: "positive number — max headlines to surface",
       },
-      // v0: renders from a baked sample wire; a real `news` shape + resource is deferred.
-      requiresShape: [],
+      requiresShape: ["news"],
       title: "News wire",
       description:
-        "A scrolling news/wire feed of headlines (source, timestamp, tickers, optional image). Scope it with spec.query. v0 shows a sample wire; live headline data is not wired to the broker yet.",
+        "A scrolling wire of headlines (source · time · tickers) over one or more bound `news` handles. Fetch a feed with data_fetch {shape:'news', entity:<ticker>} (sources: yahoo per-ticker, finnhub per-ticker; cnbc general — entity is a feed slug like 'markets'/'top'), then bind the handle(s). Bind several to aggregate; each item is labeled with its source.",
       trust: "core",
     },
     validateSpec: validateNewsSpec,
@@ -130,14 +138,25 @@ export const coreRenderers: RendererDef[] = [
   {
     manifest: {
       type: "releases",
-      specSchema: { scope: "string — filters the calendar (e.g. 'macro', a ticker)" },
-      // v0: renders from a baked sample calendar; a real point-in-time `releases` shape is deferred.
-      requiresShape: [],
+      specSchema: { scope: "string — optional label for the calendar" },
+      requiresShape: ["releases"],
       title: "Release calendar (point-in-time)",
       description:
-        "A point-in-time data-release calendar: a vintage timeline of economic/earnings releases with as-of timestamp, reference period, released/revised/scheduled status, and actual vs forecast. Scope with spec.scope. v0 shows a sample calendar; live point-in-time data is not wired to the broker yet.",
+        "Dated events with an expected-vs-actual: a point-in-time calendar over bound `releases` handles (reference period, scheduled/released/revised status, forecast vs actual numbers). Use this for anything with a RELEASE DATE and an estimate/actual — earnings EPS & revenue, macro prints. Fetch with data_fetch {shape:'releases', entity:<series-or-ticker>} (sources: finnhub earnings by ticker — emits both EPS and revenue; fred econ series e.g. GDP/CPIAUCSL/UNRATE), then bind. Bitemporal — refresh re-snapshots so a now-available actual appears as a new vintage. NOT for static/continuous facts like P/E or market cap — those go on a key_stats panel.",
       trust: "core",
     },
     validateSpec: validateReleasesSpec,
+  },
+  {
+    manifest: {
+      type: "key_stats",
+      specSchema: { scope: "string — optional label for the panel" },
+      requiresShape: ["key_stats"],
+      title: "Key statistics",
+      description:
+        "What a company IS right now: a key-statistics panel over a bound `key_stats` handle (cross-section snapshot) — valuation (P/E, P/S, P/B, EPS, dividend yield), trading (52-week high/low, beta, avg volume), and profile (sector, market cap, shares outstanding). Use this for static or continuously-moving descriptive facts that have no release date. Fetch with data_fetch {shape:'key_stats', entity:<ticker>} (source: finnhub), then bind. Refresh re-snapshots (vintages accrue). NOT for dated estimate/actual events like EPS — those go on a releases calendar.",
+      trust: "core",
+    },
+    validateSpec: validateKeyStatsSpec,
   },
 ];

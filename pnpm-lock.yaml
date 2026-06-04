@@ -36,27 +36,6 @@ importers:
         specifier: 1.15.5
         version: 1.15.5
 
-  packages/opencode-spike:
-    dependencies:
-      '@mu-resource/yahoo-finance':
-        specifier: workspace:*
-        version: link:../../resources/yahoo-finance
-      '@mu/broker':
-        specifier: workspace:*
-        version: link:../broker
-      '@mu/protocol':
-        specifier: workspace:*
-        version: link:../protocol
-      '@mu/resource-sdk':
-        specifier: workspace:*
-        version: link:../resource-sdk
-      '@opencode-ai/plugin':
-        specifier: 1.15.5
-        version: 1.15.5
-      '@opencode-ai/sdk':
-        specifier: 1.15.5
-        version: 1.15.5
-
   packages/protocol: {}
 
   packages/resource-sdk:
@@ -128,6 +107,33 @@ importers:
       vite:
         specifier: ^6.0.7
         version: 6.4.3(@types/node@22.19.19)(yaml@2.9.0)
+
+  resources/finnhub:
+    dependencies:
+      '@mu/protocol':
+        specifier: workspace:*
+        version: link:../../packages/protocol
+      '@mu/resource-sdk':
+        specifier: workspace:*
+        version: link:../../packages/resource-sdk
+
+  resources/fred:
+    dependencies:
+      '@mu/protocol':
+        specifier: workspace:*
+        version: link:../../packages/protocol
+      '@mu/resource-sdk':
+        specifier: workspace:*
+        version: link:../../packages/resource-sdk
+
+  resources/rss-news:
+    dependencies:
+      '@mu/protocol':
+        specifier: workspace:*
+        version: link:../../packages/protocol
+      '@mu/resource-sdk':
+        specifier: workspace:*
+        version: link:../../packages/resource-sdk
 
   resources/yahoo-finance:
     dependencies:

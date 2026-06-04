@@ -65,7 +65,7 @@ export function SessionRail(props: {
                 onContextMenu={(e) => openMenu(e, s.id)}
                 title={s.name}
               >
-                <span className="mu-rail__marker" data-status={s.status}>
+                <span className="mu-rail__marker" data-unread={s.unread || undefined} title={s.unread ? "unread reply" : undefined}>
                   {marker(s.name)}
                 </span>
                 {editingId === s.id ? (

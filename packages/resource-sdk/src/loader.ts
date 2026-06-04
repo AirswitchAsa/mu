@@ -59,9 +59,11 @@ export async function discoverResources(resourcesDir: string): Promise<Discovere
 }
 
 /**
- * Load and register every discovered resource. Each module must export the
- * `Resource` as `default` or as a named `resource`. Returns the registered ids.
- * Loaded at `#MuServer` startup; no hot-reload (refresh = restart).
+ * Load and register every discovered resource. A module may export a single
+ * `Resource` (as `default` or `resource`) OR an array `resources: Resource[]` so
+ * one package can ship several resources (e.g. an RSS package with one resource
+ * per wire). Returns the registered ids. Loaded at `#MuServer` startup; no
+ * hot-reload (refresh = restart).
  */
 export async function loadResources(
   resourcesDir: string,
@@ -73,13 +75,19 @@ export async function loadResources(
     const mod = (await import(pathToFileURL(d.entry).href)) as {
       default?: Resource;
       resource?: Resource;
+      resources?: Resource[];
     };
-    const resource = mod.default ?? mod.resource;
-    if (!resource || !resource.manifest) {
-      throw new Error(`resource '${d.name}' (${d.entry}) has no default/resource export`);
+    const list = mod.resources ?? (mod.default ? [mod.default] : mod.resource ? [mod.resource] : []);
+    if (list.length === 0) {
+      throw new Error(`resource '${d.name}' (${d.entry}) exports no default/resource/resources`);
     }
-    registry.register(resource);
-    ids.push(resource.manifest.id);
+    for (const resource of list) {
+      if (!resource || !resource.manifest) {
+        throw new Error(`resource '${d.name}' (${d.entry}) exported an item without a manifest`);
+      }
+      registry.register(resource);
+      ids.push(resource.manifest.id);
+    }
   }
   return ids;
 }

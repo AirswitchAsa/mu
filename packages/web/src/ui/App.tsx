@@ -2,8 +2,8 @@ import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react
 import { traceFromOp, type CanvasOp, type CanvasState, type ChatMessage } from "@mu/protocol";
 import { handlesToResolve, reconcile } from "../lib/manifest";
 import { presetForSize } from "../lib/grid";
-import type { OhlcvRow } from "../lib/types";
-import { createSession, deleteSession, getCanvas, getMessages, postUserOps, resolveHandle, streamMessage } from "../lib/api";
+import type { DataMap } from "../lib/types";
+import { createSession, deleteSession, getCanvas, getMessages, postUserOps, refreshSession, resolveHandle, sessionTitle, streamMessage } from "../lib/api";
 import type { RenderTheme } from "../renderers/types";
 import { Canvas } from "./Canvas";
 import { Chat, type ChatTurn, type TraceLine } from "./Chat";
@@ -26,6 +26,23 @@ const emptyView = (): SessionView => ({ manifest: null, chat: [], thinking: fals
 /** Server chat history → view turns. The ops-trace is now persisted server-side,
  *  so restored assistant turns carry it too (traceFromOp is the shared builder). */
 const toTurn = (m: ChatMessage): ChatTurn => ({ role: m.role, text: m.text, ops: m.ops ? [...m.ops] : undefined });
+
+function RefreshButton({ spinning, disabled, onClick }: { spinning: boolean; disabled: boolean; onClick: () => void }): JSX.Element {
+  return (
+    <button
+      className="ds-btn ds-btn--icon ds-btn--sm"
+      onClick={onClick}
+      disabled={disabled || spinning}
+      title={disabled ? "nothing to refresh" : "refresh data"}
+      aria-label="refresh data"
+    >
+      <svg className={spinning ? "mu-spin" : undefined} width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+        <path d="M21 12a9 9 0 1 1-2.64-6.36" />
+        <path d="M21 3v6h-6" />
+      </svg>
+    </button>
+  );
+}
 
 function ThemeToggle({ dark, onToggle }: { dark: boolean; onToggle: () => void }): JSX.Element {
   return (
@@ -52,11 +69,25 @@ export function App(): JSX.Element {
   const [views, setViews] = useState<Record<string, SessionView>>({});
   const [theme, setTheme] = useState<RenderTheme>(() => readTheme());
   const [dataVersion, setDataVersion] = useState(0);
+  const [refreshing, setRefreshing] = useState(false);
 
-  const cache = useRef<Map<string, OhlcvRow[]>>(new Map());
+  const cache = useRef<DataMap>(new Map());
   const prevManifest = useRef<Record<string, CanvasState | null>>({});
   const booted = useRef(false);
   const composerRef = useRef<HTMLTextAreaElement>(null);
+  // current active session, readable inside long-running async turns (for unread).
+  const activeIdRef = useRef(activeId);
+  useEffect(() => {
+    activeIdRef.current = activeId;
+  }, [activeId]);
+
+  // Pull opencode's auto-generated title and adopt it as the session name, unless
+  // the user has manually renamed (their choice always wins).
+  const syncTitle = useCallback(async (id: string): Promise<void> => {
+    const title = await sessionTitle(id);
+    if (!title) return;
+    setSessions((list) => list.map((s) => (s.id === id && !s.renamed ? { ...s, name: title } : s)));
+  }, []);
 
   // --- theme ---------------------------------------------------------------
   useLayoutEffect(() => {
@@ -103,16 +134,19 @@ export function App(): JSX.Element {
       try {
         const [canvas, messages] = await Promise.all([getCanvas(id), getMessages(id)]);
         applyManifest(id, canvas);
-        if (messages.length) setView(id, (v) => ({ ...v, chat: messages.map(toTurn) }));
+        if (messages.length) {
+          setView(id, (v) => ({ ...v, chat: messages.map(toTurn) }));
+          void syncTitle(id); // a session with history has an opencode title to adopt
+        }
       } catch {
         // stale id — re-create a server session, keep the name, swap the id
         const nid = await createSession();
-        setSessions((list) => list.map((s) => (s.id === id ? { ...s, id: nid, status: "empty" } : s)));
+        setSessions((list) => list.map((s) => (s.id === id ? { ...s, id: nid } : s)));
         setActiveId((cur) => (cur === id ? nid : cur));
         applyManifest(nid, { id: nid, windows: [], layout: {} });
       }
     },
-    [applyManifest, setView],
+    [applyManifest, setView, syncTitle],
   );
 
   // --- bootstrap -----------------------------------------------------------
@@ -123,7 +157,7 @@ export function App(): JSX.Element {
       let list = loadSessions();
       if (list.length === 0) {
         const id = await createSession();
-        list = [{ id, name: "session 1", status: "empty" }];
+        list = [{ id, name: "session 1" }];
         setSessions(list);
       }
       const first = list[0]!.id;
@@ -134,6 +168,9 @@ export function App(): JSX.Element {
 
   const active = views[activeId] ?? emptyView();
   const activeMeta = sessions.find((s) => s.id === activeId);
+  const liveHandleCount = active.manifest
+    ? new Set(active.manifest.windows.flatMap((w) => w.bindings)).size
+    : 0;
   const counts: Record<string, number> = {};
   for (const s of sessions) counts[s.id] = views[s.id]?.manifest?.windows.length ?? 0;
 
@@ -164,16 +201,40 @@ export function App(): JSX.Element {
         setView(id, (v) => ({ ...v, chat: [...v.chat, { role: "assistant", text: "", error: err instanceof Error ? err.message : String(err) }] }));
       } finally {
         setView(id, (v) => ({ ...v, thinking: false, pending: [] }));
-        setSessions((list) => list.map((s) => (s.id === id ? { ...s, status: "live" } : s)));
+        // the reply landed somewhere the user isn't looking → mark it unread.
+        if (id !== activeIdRef.current) {
+          setSessions((list) => list.map((s) => (s.id === id ? { ...s, unread: true } : s)));
+        }
+        void syncTitle(id); // opencode has (re)generated the title by turn-end
       }
     },
-    [activeId, views, setView, applyManifest],
+    [activeId, views, setView, applyManifest, syncTitle],
   );
+
+  // --- manual refresh (global) --------------------------------------------
+  // Re-acquire every data-backed handle in the active session from its source,
+  // then re-resolve exactly those (bust their cache entries). Backend owns the
+  // fetch+merge; this is request/response, no streaming.
+  const onRefresh = useCallback(async (): Promise<void> => {
+    const id = activeId;
+    if (!id || refreshing) return;
+    setRefreshing(true);
+    try {
+      const { refreshed } = await refreshSession(id);
+      for (const h of refreshed) cache.current.delete(h);
+      if (refreshed.length) resolveNeeded(refreshed);
+    } catch {
+      /* best-effort; a failed refresh leaves last-good data on screen */
+    } finally {
+      setRefreshing(false);
+    }
+  }, [activeId, refreshing, resolveNeeded]);
 
   // --- sessions ------------------------------------------------------------
   const onPick = useCallback(
     (id: string): void => {
       setActiveId(id);
+      setSessions((list) => list.map((s) => (s.id === id && s.unread ? { ...s, unread: false } : s)));
       void ensureCanvas(id);
       setRailOpen(false); // auto-hide the rail once a session is chosen
       composerRef.current?.focus(); // move the cursor off the rail, into the composer
@@ -184,7 +245,7 @@ export function App(): JSX.Element {
   const onNew = useCallback(async (): Promise<void> => {
     const id = await createSession();
     const n = sessions.length + 1;
-    setSessions((list) => [...list, { id, name: `session ${n}`, status: "empty" }]);
+    setSessions((list) => [...list, { id, name: `session ${n}` }]);
     setActiveId(id);
     applyManifest(id, { id, windows: [], layout: {} });
     setRailOpen(false);
@@ -192,7 +253,8 @@ export function App(): JSX.Element {
   }, [sessions.length, applyManifest]);
 
   const onRename = useCallback((id: string, name: string): void => {
-    setSessions((list) => list.map((s) => (s.id === id ? { ...s, name } : s)));
+    // a manual rename pins the name — stop syncing it from opencode's title.
+    setSessions((list) => list.map((s) => (s.id === id ? { ...s, name, renamed: true } : s)));
   }, []);
 
   const onDelete = useCallback(
@@ -213,7 +275,7 @@ export function App(): JSX.Element {
           void ensureCanvas(remaining[0]!.id);
         } else {
           const nid = await createSession();
-          setSessions([{ id: nid, name: "session 1", status: "empty" }]);
+          setSessions([{ id: nid, name: "session 1" }]);
           setActiveId(nid);
           applyManifest(nid, { id: nid, windows: [], layout: {} });
         }
@@ -312,6 +374,7 @@ export function App(): JSX.Element {
             </svg>
           </a>
           <div className="mu-head__right">
+            <RefreshButton spinning={refreshing} disabled={liveHandleCount === 0} onClick={() => void onRefresh()} />
             <ThemeToggle dark={t.dark} onToggle={() => setTweak("dark", !t.dark)} />
           </div>
         </header>
@@ -335,7 +398,6 @@ export function App(): JSX.Element {
 
       <Chat
         name={activeMeta?.name ?? "session"}
-        status={activeMeta?.status ?? "empty"}
         chat={active.chat}
         thinking={active.thinking}
         pendingOps={active.pending}

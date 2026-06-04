@@ -20,3 +20,17 @@ export function relWhen(hrs: number): string {
   const mag = a < 24 ? `${a}h` : `${Math.round(a / 24)}d`;
   return hrs < 0 ? `${mag} ago` : `in ${mag}`;
 }
+
+// --- timestamp-based variants (for the live data plane) ----------------------
+const MIN = 60_000;
+
+/** Epoch-ms timestamp → compact age label vs `now` ("14m" / "3h" / "2d"). */
+export function agoLabel(epochMs: number, now: number): string {
+  return relAgo(Math.max(0, (now - epochMs) / MIN));
+}
+
+/** Epoch-ms timestamp → "3h ago" / "in 2d" / "now" vs `now`. */
+export function whenLabel(epochMs: number, now: number): string {
+  const hrs = Math.round((epochMs - now) / (60 * MIN));
+  return relWhen(hrs);
+}

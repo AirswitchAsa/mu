@@ -24,7 +24,38 @@ const META = "meta.json";
 const INCOMING = "incoming.json.tmp";
 
 function timeKeyOf(shape: Shape): string {
-  return shape.merge.kind === "series" ? shape.merge.timeKey : "t";
+  const m = shape.merge;
+  if (m.kind === "series" || m.kind === "event-list" || m.kind === "point-in-time") return m.timeKey;
+  if (m.kind === "cross-section") return m.asOfKey;
+  return "t";
+}
+
+/**
+ * The columns a merge dedupes on (incoming wins on collision). One key per kind's
+ * identity: series → time, event-list → id, point-in-time → (event, reference,
+ * vintage) so a revision is a distinct row, cross-section → (vintage, field) so a
+ * re-snapshot upserts a field and a new vintage is appended. Re-fetching a vintage is
+ * idempotent in every case.
+ */
+function dedupeKeysOf(shape: Shape): string[] {
+  const m = shape.merge;
+  if (m.kind === "series") return [m.timeKey];
+  if (m.kind === "event-list") return [m.idKey];
+  if (m.kind === "point-in-time") return [m.eventKey, m.referenceKey, m.asOfKey];
+  if (m.kind === "cross-section") return [m.asOfKey, m.idKey];
+  return ["t"];
+}
+
+/** Double-quote a column name so reserved words (e.g. `event`) are safe in SQL. */
+const q = (name: string): string => `"${name.replace(/"/g, '""')}"`;
+
+/** Coerce an as-of cutoff (epoch-ms number or string, or ISO date) to epoch-ms. */
+function asEpochMs(asOf: string | number): number {
+  if (typeof asOf === "number") return asOf;
+  const n = Number(asOf);
+  if (Number.isFinite(n)) return n;
+  const t = Date.parse(asOf);
+  return Number.isFinite(t) ? t : 0;
 }
 
 function yearOf(epochMs: number): number {
@@ -81,27 +112,31 @@ export class Storage {
     );
   }
 
-  // ---- series merge (write path) -------------------------------------------
+  // ---- merge (write path) --------------------------------------------------
 
   private typeStruct(shape: Shape): string {
+    // Quote field names so reserved words (e.g. `group`) are legal struct keys.
     return (
-      "{" + shape.columns.map((c) => `${c.name}: '${DUCK_TYPE[c.type]}'`).join(", ") + "}"
+      "{" + shape.columns.map((c) => `${q(c.name)}: '${DUCK_TYPE[c.type]}'`).join(", ") + "}"
     );
   }
 
   private colList(shape: Shape): string {
-    return shape.columns.map((c) => c.name).join(", ");
+    return shape.columns.map((c) => q(c.name)).join(", ");
   }
 
   /**
-   * Union incoming rows into the affected year partitions by time key, overwriting
-   * on collision, kept sorted (merge_series.dog.md). Only touched years are rewritten.
-   * Each partition is written to a temp parquet then renamed (the commit point).
+   * Union incoming rows into the affected year partitions, deduping by the shape's
+   * merge keys (incoming wins) and kept sorted by time key. Drives all kinds:
+   * `series` dedupes by time, `event-list` by id, `point-in-time` by
+   * (event, reference, vintage) — so a revision is a *new* row, never an overwrite.
+   * Only touched years are rewritten; each partition is temp-then-renamed (commit).
    */
-  async mergeSeries(handle: Handle, shape: Shape, payload: readonly Record<string, unknown>[]): Promise<void> {
+  async merge(handle: Handle, shape: Shape, payload: readonly Record<string, unknown>[]): Promise<void> {
     const dir = this.dir(handle);
     await mkdir(dir, { recursive: true });
     const timeKey = timeKeyOf(shape);
+    const partitionBy = dedupeKeysOf(shape).map(q).join(", ");
     const cols = this.colList(shape);
 
     // Stage the increment to a JSON file so DuckDB types it via the column struct
@@ -119,15 +154,15 @@ export class Storage {
         const incSelect =
           `SELECT ${cols}, 1 AS __src FROM read_json(${sqlLiteral(incPath)}, ` +
           `columns = ${this.typeStruct(shape)}, format = 'array') ` +
-          `WHERE year(epoch_ms(${timeKey})) = ${year}`;
+          `WHERE year(epoch_ms(${q(timeKey)})) = ${year}`;
         const union = existsSync(partPath)
           ? `${incSelect} UNION ALL SELECT ${cols}, 0 AS __src FROM read_parquet(${sqlLiteral(partPath)})`
           : incSelect;
         const sql =
           `COPY (` +
           `WITH src AS (${union}), ` +
-          `ranked AS (SELECT *, row_number() OVER (PARTITION BY ${timeKey} ORDER BY __src DESC) AS __rn FROM src) ` +
-          `SELECT ${cols} FROM ranked WHERE __rn = 1 ORDER BY ${timeKey}` +
+          `ranked AS (SELECT *, row_number() OVER (PARTITION BY ${partitionBy} ORDER BY __src DESC) AS __rn FROM src) ` +
+          `SELECT ${cols} FROM ranked WHERE __rn = 1 ORDER BY ${q(timeKey)}` +
           `) TO ${sqlLiteral(tmpPath)} (FORMAT PARQUET)`;
         await this.duck.run(sql);
         await rename(tmpPath, partPath);
@@ -146,19 +181,37 @@ export class Storage {
       slice?.fields && slice.fields.length > 0
         ? allCols.filter((c) => slice.fields!.includes(c))
         : allCols;
-    const colList = (projected.length > 0 ? projected : allCols).join(", ");
+    const colList = (projected.length > 0 ? projected : allCols).map(q).join(", ");
+    const glob = sqlLiteral(this.glob(handle));
 
     const conds: string[] = [];
-    if (slice?.timeRange?.start !== undefined) conds.push(`${timeKey} >= ${slice.timeRange.start}`);
-    if (slice?.timeRange?.end !== undefined) conds.push(`${timeKey} <= ${slice.timeRange.end}`);
-    const where = conds.length > 0 ? ` WHERE ${conds.join(" AND ")}` : "";
+    if (slice?.timeRange?.start !== undefined) conds.push(`${q(timeKey)} >= ${slice.timeRange.start}`);
+    if (slice?.timeRange?.end !== undefined) conds.push(`${q(timeKey)} <= ${slice.timeRange.end}`);
 
-    const base = `SELECT ${colList} FROM read_parquet(${sqlLiteral(this.glob(handle))})${where}`;
+    // as-of read (point-in-time + cross-section): per logical row the latest vintage
+    // known on/before the cutoff — i.e. "what was knowable as of D". The partition is
+    // the logical-row identity: (event, reference) for PIT, (field) for cross-section.
+    const m = shape.merge;
+    if ((m.kind === "point-in-time" || m.kind === "cross-section") && slice?.asOf !== undefined) {
+      const cutoff = asEpochMs(slice.asOf);
+      const rowKeys = m.kind === "point-in-time" ? [m.eventKey, m.referenceKey] : [m.idKey];
+      const partBy = rowKeys.map(q).join(", ");
+      const w = [...conds, `${q(m.asOfKey)} <= ${cutoff}`].join(" AND ");
+      return (
+        `SELECT ${colList} FROM (` +
+        `SELECT *, row_number() OVER (PARTITION BY ${partBy} ORDER BY ${q(m.asOfKey)} DESC) AS __rn ` +
+        `FROM read_parquet(${glob}) WHERE ${w}` +
+        `) WHERE __rn = 1 ORDER BY ${q(timeKey)}`
+      );
+    }
+
+    const where = conds.length > 0 ? ` WHERE ${conds.join(" AND ")}` : "";
+    const base = `SELECT ${colList} FROM read_parquet(${glob})${where}`;
     if (slice?.last !== undefined) {
       // most-recent N, returned ascending
-      return `SELECT * FROM (${base} ORDER BY ${timeKey} DESC LIMIT ${slice.last}) ORDER BY ${timeKey}`;
+      return `SELECT * FROM (${base} ORDER BY ${q(timeKey)} DESC LIMIT ${slice.last}) ORDER BY ${q(timeKey)}`;
     }
-    return `${base} ORDER BY ${timeKey}`;
+    return `${base} ORDER BY ${q(timeKey)}`;
   }
 
   /** Full / sliced read. Renderers call this for full data (resolve); view adds a guard. */
@@ -173,8 +226,8 @@ export class Storage {
     if (!(await this.exists(handle))) return 0;
     const timeKey = timeKeyOf(shape);
     const conds: string[] = [];
-    if (slice?.timeRange?.start !== undefined) conds.push(`${timeKey} >= ${slice.timeRange.start}`);
-    if (slice?.timeRange?.end !== undefined) conds.push(`${timeKey} <= ${slice.timeRange.end}`);
+    if (slice?.timeRange?.start !== undefined) conds.push(`${q(timeKey)} >= ${slice.timeRange.start}`);
+    if (slice?.timeRange?.end !== undefined) conds.push(`${q(timeKey)} <= ${slice.timeRange.end}`);
     const where = conds.length > 0 ? ` WHERE ${conds.join(" AND ")}` : "";
     const rows = await this.duck.all(
       `SELECT count(*) AS n FROM read_parquet(${sqlLiteral(this.glob(handle))})${where}`,
