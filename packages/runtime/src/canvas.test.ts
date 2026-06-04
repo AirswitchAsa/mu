@@ -69,6 +69,27 @@ describe("apply_canvas_op — authorization (content vs layout)", () => {
     const moved = applyCanvasOps(s, [{ op: "move", windowId: id, placement: { col: 3, row: 1 } }], "user", d);
     expect(moved.layout[id]).toMatchObject({ col: 3, row: 1, pinned: true });
   });
+
+  it("reorder is user-only and moves a window before/after a target in window order", () => {
+    const d = deps();
+    let s = applyCanvasOps(empty(), [{ op: "create", type: "memo" }], "agent", d);
+    s = applyCanvasOps(s, [{ op: "create", type: "memo" }], "agent", d);
+    s = applyCanvasOps(s, [{ op: "create", type: "memo" }], "agent", d);
+    const [a, b, c] = s.windows.map((w) => w.id);
+    // the agent may not reorder (it's a layout op)
+    expect(() => applyCanvasOps(s, [{ op: "reorder", windowId: c!, targetId: a!, after: false }], "agent", d)).toThrow(
+      MuErrorException,
+    );
+    // user moves C before A → [C, A, B]
+    const r1 = applyCanvasOps(s, [{ op: "reorder", windowId: c!, targetId: a!, after: false }], "user", d);
+    expect(r1.windows.map((w) => w.id)).toEqual([c, a, b]);
+    // user moves A after B → [C, B, A]
+    const r2 = applyCanvasOps(r1, [{ op: "reorder", windowId: a!, targetId: b!, after: true }], "user", d);
+    expect(r2.windows.map((w) => w.id)).toEqual([c, b, a]);
+    // reordering onto itself is a no-op
+    const r3 = applyCanvasOps(r2, [{ op: "reorder", windowId: a!, targetId: a!, after: true }], "user", d);
+    expect(r3.windows.map((w) => w.id)).toEqual([c, b, a]);
+  });
 });
 
 describe("apply_canvas_op — validation", () => {
@@ -109,8 +130,8 @@ describe("auto_layout", () => {
     const s = applyCanvasOps(
       empty(),
       [
-        { op: "create", type: "price_chart" }, // 8 wide
-        { op: "create", type: "price_chart" }, // 8 wide → can't share the 12-col row
+        { op: "create", type: "price_chart" }, // L = 2 wide
+        { op: "create", type: "price_chart" }, // L = 2 wide → can't share the 3-col row
       ],
       "agent",
       d,

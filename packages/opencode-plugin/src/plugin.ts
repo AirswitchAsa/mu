@@ -13,6 +13,11 @@ import { tool } from "@opencode-ai/plugin/tool";
 
 const z = tool.schema;
 
+/** Bound on a single tool callback (e.g. a data_fetch hitting a slow source). A
+ *  hung verb would otherwise stall the agent's whole turn; this surfaces it as a
+ *  normal tool error the agent can react to. Override via MU_TOOL_TIMEOUT_MS. */
+const TOOL_TIMEOUT_MS = Number(process.env["MU_TOOL_TIMEOUT_MS"] ?? 60_000);
+
 async function call(verb: string, sessionID: string, args: Record<string, unknown>): Promise<unknown> {
   const base = process.env["MU_CALLBACK_URL"];
   if (!base) throw new Error("MU_CALLBACK_URL is not set; the µ endpoint is unknown.");
@@ -20,6 +25,7 @@ async function call(verb: string, sessionID: string, args: Record<string, unknow
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify({ sessionID, args }),
+    signal: TOOL_TIMEOUT_MS > 0 ? AbortSignal.timeout(TOOL_TIMEOUT_MS) : undefined,
   });
   const json = (await resp.json()) as { ok?: unknown; error?: { code: string; message: string } };
   if (json.error) throw new Error(`${json.error.code}: ${json.error.message}`);
@@ -96,14 +102,14 @@ export const server: Plugin = async () => ({
 
     renderer_list: tool({
       description:
-        "List the window types you can create (price_chart, compare, memo, …) with each one's spec options and the data shape it requires. Call this before canvas_create so you use a valid type and spec.",
+        "List the window types you can create (price_chart, compare, memo, …) with each one's spec options and the data shape it requires. For price_chart this includes the full technical-indicator catalog (specSchema.indicatorCatalog: names, params + ranges, placement). Call this before canvas_create/canvas_update so you use a valid type, indicator name, and params.",
       args: {},
       execute: (_args, ctx) => run("renderer_list", ctx.sessionID, {}, (ok) => JSON.stringify(ok)),
     }),
 
     canvas_create: tool({
       description:
-        "Create a typed window on the canvas (call renderer_list first to see types, e.g. price_chart) and optionally bind a data handle. You author content (spec + bindings), never layout. Toggle indicators later via canvas_update.",
+        "Create a typed window on the canvas (call renderer_list first to see types, e.g. price_chart) and optionally bind a data handle. You author content (spec + bindings), never layout. For price_chart, add indicators via spec.indicators (e.g. [{name:'ema',params:{period:50}},{name:'rsi'}]); add/remove them later via canvas_update.",
       args: {
         type: z.string().describe("window type, e.g. price_chart"),
         handle: z.string().optional().describe("data handle to bind"),

@@ -9,8 +9,8 @@ the `#ToolSurface` canvas verbs, the user through `#WebClient` interactions.
 
 The `#MuServer` is the single applier. For an ordered list of `&CanvasOp`s it:
 **(1) authorizes** each op by class — content ops (`create`, `update`, `delete`,
-`focus`, `bind`) from either party; layout ops (`move`, `resize`) **only from
-the `@User`** (an agent layout op is rejected); **(2) validates** — `create`/
+`focus`, `bind`) from either party; layout ops (`move`, `resize`, `reorder`)
+**only from the `@User`** (an agent layout op is rejected); **(2) validates** — `create`/
 `update` specs against the target `#Renderer`'s `specSchema` (via the
 `#RendererRegistry`), `bind` handles' shapes against the renderer's
 `requiresShape`, references against existing windows; **(3) applies**
@@ -27,7 +27,8 @@ The canvas verbs and their signatures:
 | `delete(windowId)` | agent / user | remove the window |
 | `focus(windowId)` | agent / user | set the focused window |
 | `bind(windowId, handle)` | agent / user | bind a `&Handle`; records provenance |
-| `move/resize(windowId, placement)` | **user only** | layout; rejected from the agent |
+| `move/resize(windowId, placement)` | **user only** | layout (col/row/spans); rejected from the agent |
+| `reorder(windowId, targetId, after)` | **user only** | move a window before/after a target in window order (grid flow); rejected from the agent |
 
 ## Outcome
 

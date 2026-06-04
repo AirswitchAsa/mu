@@ -119,6 +119,17 @@ function applyOne(state: SessionState, op: CanvasOp, deps: CanvasDeps): void {
       };
       return;
     }
+    case "reorder": {
+      requireWindow(state, op.windowId);
+      requireWindow(state, op.targetId);
+      if (op.windowId === op.targetId) return;
+      const moving = state.windows.find((w) => w.id === op.windowId)!;
+      const rest = state.windows.filter((w) => w.id !== op.windowId);
+      const at = rest.findIndex((w) => w.id === op.targetId);
+      rest.splice(op.after ? at + 1 : at, 0, moving);
+      state.windows = rest;
+      return;
+    }
   }
 }
 

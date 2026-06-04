@@ -8,6 +8,35 @@ export interface OpencodeDriverOptions {
   callbackUrl: string;
   hostname?: string;
   port?: number;
+  /** Per-turn deadline (ms). A `prompt` that exceeds it rejects with a
+   *  `TurnTimeoutError` so the SSE stream always terminates instead of hanging
+   *  the UI on "composing" forever. Default 180s; `0` disables. */
+  timeoutMs?: number;
+}
+
+const DEFAULT_TIMEOUT_MS = 180_000;
+
+/** Reject `p` if it doesn't settle within `ms`; the rejection's `name` is
+ *  `TurnTimeoutError` so callers can map it to a clear error code. */
+function withTimeout<T>(p: Promise<T>, ms: number): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const timer = setTimeout(() => {
+      const e = new Error(`agent turn timed out after ${Math.round(ms / 1000)}s`);
+      e.name = "TurnTimeoutError";
+      reject(e);
+    }, ms);
+    if (typeof timer.unref === "function") timer.unref();
+    p.then(
+      (v) => {
+        clearTimeout(timer);
+        resolve(v);
+      },
+      (e) => {
+        clearTimeout(timer);
+        reject(e);
+      },
+    );
+  });
 }
 
 /** Parse "provider/model" into the prompt body's model shape. */
@@ -43,6 +72,7 @@ export class OpencodeDriver {
     private readonly server: { url: string; close(): void },
     private readonly client: ReturnType<typeof createOpencodeClient>,
     private readonly model: string,
+    private readonly timeoutMs: number,
   ) {}
 
   static async start(opts: OpencodeDriverOptions): Promise<OpencodeDriver> {
@@ -86,7 +116,7 @@ export class OpencodeDriver {
     if (opts.port !== undefined) serverOpts.port = opts.port;
     const server = await createOpencodeServer(serverOpts);
     const client = createOpencodeClient({ baseUrl: server.url });
-    return new OpencodeDriver(server, client, opts.model);
+    return new OpencodeDriver(server, client, opts.model, opts.timeoutMs ?? DEFAULT_TIMEOUT_MS);
   }
 
   get url(): string {
@@ -111,10 +141,11 @@ export class OpencodeDriver {
    */
   async prompt(sessionId: string, text: string, extraParts: string[] = []): Promise<string> {
     const parts = [text, ...extraParts].map((t) => ({ type: "text" as const, text: t }));
-    const result = await this.client.session.prompt({
+    const call = this.client.session.prompt({
       path: { id: sessionId },
       body: { parts, model: parseModel(this.model) },
     });
+    const result = this.timeoutMs > 0 ? await withTimeout(call, this.timeoutMs) : await call;
     return extractAssistantText(result);
   }
 

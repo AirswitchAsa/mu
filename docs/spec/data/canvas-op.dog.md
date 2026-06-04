@@ -11,8 +11,8 @@ transactionally.
 ## Fields
 
 - **op** — the verb: one of `create`, `update`, `delete`, `focus`, `bind`
-  (content ops, agent- or user-emitted) or `move`, `resize` (layout ops,
-  `@User`-only).
+  (content ops, agent- or user-emitted) or `move`, `resize`, `reorder` (layout
+  ops, `@User`-only).
 - **windowId?** — the `&Window` the op targets (absent for `create`, which
   mints one).
 - **type?** — for `create`: the window/renderer type.
@@ -21,6 +21,9 @@ transactionally.
 - **handle?** — for `bind`/`create`: the `&Handle`(s) to bind.
 - **placement?** — for `move`/`resize`: grid coordinates; **rejected if the
   emitter is the `@Agent`**.
+- **targetId? / after?** — for `reorder`: move `windowId` before (`after:false`)
+  or after (`after:true`) `targetId` in window order (the grid dashboard flows
+  cards in this order); **rejected if the emitter is the `@Agent`**.
 
 ## Notes
 

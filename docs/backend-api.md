@@ -34,11 +34,14 @@ with `code` from the typed set (`VALIDATION_FAILED`, `HANDLE_NOT_FOUND`,
 |---|---|---|---|
 | `GET` | `/api/sessions/:id/canvas` | — | `CanvasState`: `{ id, windows[], layout, focusedWindowId? }` |
 | `GET` | `/api/sessions/:id/messages` | — | `{ messages: ChatMessage[] }` — chat history for reload-restore (`{ role, text, at }`) |
-| `POST` | `/api/sessions/:id/canvas/ops` | `{ ops: CanvasOp[] }` | `{ summary }` — **user** ops (incl. `move`/`resize`) |
+| `POST` | `/api/sessions/:id/canvas/ops` | `{ ops: CanvasOp[] }` | `{ summary }` — **user** ops (incl. `move`/`resize`/`reorder`) |
 
 `Window`: `{ id, type, title, spec, bindings: Handle[], provenanceRefs }`.
 `layout[windowId]`: `{ col, row, colSpan, rowSpan, pinned }`. The user owns layout;
-agent ops that try `move`/`resize` are rejected.
+agent ops that try `move`/`resize`/`reorder` are rejected. The web client lays the
+canvas out as a responsive **grid dashboard**: card size = `colSpan`×`rowSpan` on
+an S/M/L/XL ladder (backend grid is 3 cols), and `reorder(windowId, targetId,
+after)` moves a window before/after a target in window order.
 
 > Session state (canvas + messages) is **in-memory** in v0: it survives a browser
 > reload (re-fetch canvas + messages) but **not a server restart**. The web client

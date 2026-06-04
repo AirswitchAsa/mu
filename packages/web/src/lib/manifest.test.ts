@@ -40,7 +40,7 @@ describe("reconcile", () => {
 
   it("a spec-only change is updated but needs NO re-resolve", () => {
     const prev = state([win("w1", { spec: {} })]);
-    const next = state([win("w1", { spec: { overlays: [{ kind: "sma", period: 50 }] } })]);
+    const next = state([win("w1", { spec: { indicators: [{ name: "sma", params: { period: 50 } }] } })]);
     const diff = reconcile(prev, next);
     expect(diff.updated).toHaveLength(1);
     expect(diff.updated[0]).toMatchObject({ id: "w1", specChanged: true, bindingsChanged: false });

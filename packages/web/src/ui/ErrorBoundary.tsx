@@ -34,8 +34,8 @@ export class ErrorBoundary extends Component<Props, State> {
   render(): ReactNode {
     if (this.state.message !== null) {
       return (
-        <div className="mu-win mu-win--error">
-          <div className="mu-win__fallback">
+        <div className="mu-card mu-card--error">
+          <div className="mu-card__fallback">
             {this.props.label ?? "render error"}
             <span className="ds-spec">{this.state.message}</span>
           </div>

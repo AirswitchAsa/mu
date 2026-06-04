@@ -9,19 +9,23 @@ html, body { height: 100%; }
 body { overflow: hidden; }
 *, *::before, *::after { box-sizing: border-box; }
 
-/* paper-soft is near-white in the DS; nudge it so raised surfaces read */
-:root[data-theme="light"] { --paper-soft: #fbfbfb; --mu-hover: #f3f3f3; }
-:root[data-theme="dark"] { --mu-hover: var(--paper-grey); }
+/* paper-soft is near-white in the DS; nudge it so raised surfaces read. The
+   playground is a white dotted pane (--mu-pane) with tinted cards (--mu-card). */
+:root[data-theme="light"] { --paper-soft: #fbfbfb; --mu-hover: #f3f3f3; --mu-pane: #ffffff; --mu-card: #fbfbfb; }
+:root[data-theme="dark"] { --mu-hover: var(--paper-grey); --mu-pane: #2b2b2b; --mu-card: #363636; }
 
 :root {
   --mu-rail-w: 56px;
   --mu-rail-w-open: 280px;
   --mu-head-h: 56px;
-  --mu-gap: 18px;
+  --mu-gap: 16px;
   --mu-pad: 14px;
+  --mu-row: 224px;          /* grid row unit — card height = rows·row + gaps */
+  --mu-grid-pad: 22px;
+  --mu-grid-max: 1660px;    /* caps column width on very wide screens */
 }
-[data-density="compact"] { --mu-gap: 13px; --mu-pad: 10px; }
-[data-density="comfy"]   { --mu-gap: 26px; --mu-pad: 18px; }
+[data-density="compact"] { --mu-gap: 12px; --mu-pad: 10px; --mu-row: 196px; --mu-grid-pad: 16px; }
+[data-density="comfy"]   { --mu-gap: 22px; --mu-pad: 18px; --mu-row: 256px; --mu-grid-pad: 30px; }
 
 .mu-app { height: 100vh; display: flex; flex-direction: row; background: var(--paper); }
 .mu-left { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; position: relative; }
@@ -115,92 +119,209 @@ body { overflow: hidden; }
 .mu-ctx__item--danger:hover { background: color-mix(in srgb, var(--danger), transparent 90%); }
 .mu-ctx__sep { height: 1px; background: var(--line); margin: 5px 8px; }
 
-/* ---- stage + canvas --------------------------------------------------- */
-.mu-stage { flex: 1 1 auto; position: relative; min-width: 0; padding-left: var(--mu-rail-w); }
-.mu-canvas {
-  position: absolute; inset: 0 0 0 var(--mu-rail-w); overflow: auto;
-  background-color: var(--paper);
-  background-image: radial-gradient(circle, color-mix(in srgb, var(--ink), transparent 88%) 1px, transparent 1px);
-  background-size: 24px 24px; background-position: 12px 12px;
+/* ---- stage + grid dashboard ------------------------------------------ */
+/* The stage is a white dotted pane; cards (solid fill) tile on a responsive grid
+   and the dots show through the gutters. Column count is decided client-side from
+   width and exposed as --mu-cols; each card spans cells per its S/M/L/XL size. */
+.mu-stage {
+  flex: 1 1 auto; position: relative; min-width: 0; padding-left: var(--mu-rail-w);
+  background-color: var(--mu-pane);
+  background-image: radial-gradient(circle, color-mix(in srgb, var(--ink), transparent 86%) 1px, transparent 1px);
+  background-size: 22px 22px; background-position: 11px 11px;
 }
-.mu-canvas__empty {
-  position: absolute; top: 42%; left: 50%; transform: translate(-50%, -50%);
+.mu-grid {
+  position: absolute; inset: 0 0 0 var(--mu-rail-w); overflow-y: auto; overflow-x: hidden;
+  background: transparent;
+  display: grid;
+  grid-template-columns: repeat(var(--mu-cols, 3), minmax(0, 1fr));
+  grid-auto-rows: var(--mu-row);
+  grid-auto-flow: row dense;
+  gap: var(--mu-gap);
+  align-content: start;
+  padding: var(--mu-grid-pad);
+  max-width: calc(var(--mu-grid-max) + var(--mu-rail-w)); margin: 0 auto;
+}
+.mu-grid__empty {
+  position: absolute; top: 40%; left: 50%; transform: translate(-50%, -50%);
   display: flex; flex-direction: column; align-items: center; gap: 10px; text-align: center;
   pointer-events: none;
 }
-.mu-canvas__empty .ds-loading-glyph { font-size: 40px; color: var(--line-strong); }
-.mu-empty__lead { font-size: 15px; color: var(--muted); margin: 0; }
+.mu-grid__empty .ds-loading-glyph { font-size: 40px; color: var(--line-strong); }
 .mu-empty__hint { color: var(--muted); }
 
-/* ---- window ----------------------------------------------------------- */
-.mu-win {
-  position: absolute; display: flex; flex-direction: column;
-  background: var(--paper); border: 1px solid var(--line);
-  border-radius: var(--ds-radius-lg);
-  min-width: 300px; min-height: 200px; overflow: hidden;
+/* ---- card ------------------------------------------------------------- */
+.mu-card {
+  display: flex; flex-direction: column; min-width: 0; min-height: 0;
+  background: var(--mu-card); border: 0;
+  border-radius: var(--ds-radius-lg); overflow: hidden; outline: none;
+  transition: outline-color var(--ds-motion-base) var(--ds-ease-standard);
 }
-.mu-win.is-dragging { border-color: var(--ink-soft); }
-.mu-win__bar {
-  flex: 0 0 38px; position: relative; display: flex; align-items: center;
-  padding: 0 14px;
+.mu-card:focus-visible { outline: 2px solid var(--action); outline-offset: -2px; }
+.mu-card.is-dragging { outline: 2px solid var(--ink); outline-offset: -2px; z-index: 9000 !important; }
+body.mu-is-dragging { cursor: grabbing; user-select: none; }
+
+.mu-card__bar {
+  flex: 0 0 36px; display: flex; align-items: center; gap: 8px;
+  padding: 0 8px 0 12px;
   cursor: grab; touch-action: none; user-select: none;
 }
-.mu-win.is-dragging .mu-win__bar { cursor: grabbing; }
-.mu-win__handle {
-  color: var(--muted); opacity: 0; transition: opacity var(--ds-motion-base);
-  max-width: 50%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+.mu-card.is-dragging .mu-card__bar { cursor: grabbing; }
+.mu-card__grip { flex: 0 0 auto; display: inline-flex; color: var(--muted); opacity: 0; transition: opacity var(--ds-motion-base); }
+.mu-card:hover .mu-card__grip { opacity: 0.65; }
+.mu-card__title {
+  flex: 0 0 auto; max-width: 56%; font-size: 12.5px; color: var(--ink);
+  letter-spacing: -0.01em; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
-.mu-win__bar:hover .mu-win__handle { opacity: 0.75; }
-.mu-win__title {
-  position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%);
-  font-size: 13px; color: var(--ink); white-space: nowrap; letter-spacing: -0.01em;
+.mu-card__handle {
+  flex: 1 1 auto; min-width: 0; color: var(--muted); opacity: 0;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  transition: opacity var(--ds-motion-base);
 }
-.mu-win__close {
-  margin-left: auto; width: 22px; height: 22px; border: 0; background: transparent;
-  color: var(--muted); cursor: pointer; border-radius: var(--ds-radius-circle);
-  display: inline-flex; align-items: center; justify-content: center;
-  opacity: 0; transition: opacity var(--ds-motion-base), background var(--ds-motion-base), color var(--ds-motion-base);
-}
-.mu-win__bar:hover .mu-win__close { opacity: 1; }
-.mu-win__close:hover { background: var(--danger); color: var(--paper); }
+.mu-card__bar:hover .mu-card__handle { opacity: 0.6; }
+.mu-card__tools { flex: 0 0 auto; margin-left: auto; display: flex; align-items: center; gap: 6px; }
 
+.mu-sizer {
+  display: inline-flex; align-items: center; gap: 1px;
+  border: 1px solid var(--line-strong); border-radius: var(--ds-radius-pill);
+  padding: 1px; opacity: 0.45; transition: opacity var(--ds-motion-base);
+}
+.mu-card:hover .mu-sizer, .mu-card:focus-within .mu-sizer { opacity: 1; }
+.mu-sizer__btn {
+  width: 20px; height: 20px; border: 0; background: transparent; color: var(--ink-soft);
+  cursor: pointer; border-radius: var(--ds-radius-circle);
+  display: inline-flex; align-items: center; justify-content: center;
+  transition: background var(--ds-motion-base), color var(--ds-motion-base);
+}
+.mu-sizer__btn:hover:not(:disabled) { background: var(--mu-hover); color: var(--ink); }
+.mu-sizer__btn:disabled { opacity: 0.3; cursor: default; }
+.mu-sizer__val { width: 16px; text-align: center; color: var(--ink-soft); }
+
+.mu-card__close {
+  width: 22px; height: 22px; border: 0; background: transparent; color: var(--muted);
+  cursor: pointer; border-radius: var(--ds-radius-circle);
+  display: inline-flex; align-items: center; justify-content: center; opacity: 0;
+  transition: opacity var(--ds-motion-base), background var(--ds-motion-base), color var(--ds-motion-base);
+}
+.mu-card:hover .mu-card__close, .mu-card:focus-within .mu-card__close { opacity: 1; }
+.mu-card__close:hover { background: var(--danger); color: var(--paper); }
+
+.mu-card__body { flex: 1 1 auto; position: relative; min-height: 0; display: flex; flex-direction: column; }
+
+/* a card whose renderer threw — fills its slot with the message (no overlap) */
+.mu-card--error { outline: 1px solid var(--danger); }
+.mu-card__fallback {
+  flex: 1 1 auto; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 6px;
+  color: var(--muted); font-family: var(--ds-font-mono); font-size: 12px; text-align: center; padding: 16px;
+}
+.mu-card__fallback .ds-spec { opacity: 0.8; word-break: break-word; }
+
+/* ---- chart legend + chart surface ------------------------------------- */
 .mu-legend {
   flex: 0 0 auto; display: flex; align-items: center; gap: 14px;
-  padding: 2px 14px 8px;
-  font-family: var(--ds-font-mono); font-size: 11px;
+  padding: 8px 12px 4px; font-family: var(--ds-font-mono); font-size: 11px;
 }
 .mu-legend__sym { color: var(--ink); font-weight: 600; letter-spacing: 0.04em; }
 .mu-legend__price { color: var(--ink-soft); font-variant-numeric: tabular-nums; }
 .mu-legend__chg { color: var(--muted); font-variant-numeric: tabular-nums; }
 .mu-legend__chg[data-dir="up"] { color: var(--system); }
 .mu-legend__chg[data-dir="down"] { color: var(--danger); }
-.mu-legend__key { color: var(--ink-soft); font-variant-numeric: tabular-nums; display: inline-flex; align-items: center; gap: 6px; }
+.mu-legend__key { color: var(--ink-soft); font-variant-numeric: tabular-nums; display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; }
 .mu-legend__key::before { content: ""; width: 14px; height: 2px; display: inline-block; }
 .mu-legend__key[data-series="a"]::before { background: var(--action); }
 .mu-legend__key[data-series="b"]::before { background: var(--ink-soft); }
-.mu-legend__tag {
-  margin-left: auto; color: var(--muted); letter-spacing: 0.12em; text-transform: uppercase; font-size: 10px;
-}
-.mu-win__body { flex: 1 1 auto; position: relative; min-height: 0; }
+.mu-legend__tag { margin-left: auto; color: var(--muted); letter-spacing: 0.12em; text-transform: uppercase; font-size: 10px; }
+.mu-card__chart { flex: 1 1 auto; position: relative; min-height: 0; }
 .mu-chart { position: absolute; inset: 0; }
-.mu-memo { position: absolute; inset: 0; overflow: auto; padding: 4px 16px 16px; font-size: 13.5px; line-height: 1.6; color: var(--ink); }
-.mu-win__fallback {
-  position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 6px;
-  color: var(--muted); font-family: var(--ds-font-mono); font-size: 12px; text-align: center; padding: 16px;
-}
-/* a window whose renderer threw — flows in place so stacked errors don't overlap */
-.mu-win--error { position: relative; margin: 16px; width: 360px; height: auto; min-height: 120px; border-color: var(--danger); }
-.mu-win--error .mu-win__fallback { position: relative; inset: auto; }
-.mu-win--error .mu-win__fallback .ds-spec { color: var(--muted); opacity: 0.8; word-break: break-word; }
 
-.mu-win__resize {
-  position: absolute; right: 0; bottom: 0; width: 18px; height: 18px;
-  cursor: nwse-resize; touch-action: none; opacity: 0.55;
-  background-image: radial-gradient(circle, color-mix(in srgb, var(--ink), transparent 70%) 1.1px, transparent 1.5px);
-  background-size: 5px 5px; background-position: bottom 3px right 3px;
-  transition: opacity var(--ds-motion-base);
+/* ---- indicator legend (drawn imperatively by the price_chart renderer) -- */
+.mu-ind-legend {
+  position: absolute; top: 6px; left: 8px; z-index: 3; pointer-events: none;
+  display: flex; flex-direction: column; gap: 2px;
 }
-.mu-win:hover .mu-win__resize { opacity: 1; }
+.mu-ind-legend__row { display: flex; align-items: center; gap: 6px; }
+.mu-ind-legend__dot { width: 9px; height: 9px; border-radius: 2px; flex: 0 0 auto; }
+.mu-ind-legend__label {
+  font-family: var(--ds-font-mono); font-size: 10.5px; letter-spacing: 0.03em;
+  color: var(--ink-soft); font-variant-numeric: tabular-nums; white-space: nowrap;
+}
+.mu-memo { position: absolute; inset: 0; overflow: auto; padding: 4px 16px 16px; font-size: 13.5px; line-height: 1.6; color: var(--ink); }
+
+/* ---- news feed -------------------------------------------------------- */
+.mu-news { flex: 1 1 auto; display: flex; flex-direction: column; min-height: 0; }
+.mu-news__bar {
+  flex: 0 0 auto; display: flex; align-items: center; justify-content: space-between; gap: 10px;
+  padding: 4px 12px 8px;
+}
+.mu-news__bar .ds-spec { white-space: nowrap; }
+.mu-news__live { display: inline-flex; align-items: center; gap: 6px; color: var(--action); }
+.mu-news__live .ds-dot { background: var(--action); }
+.mu-news__list { flex: 1 1 auto; overflow-y: auto; min-height: 0; }
+.mu-news__item { display: flex; gap: 12px; padding: 13px 12px; transition: background var(--ds-motion-fast); }
+.mu-news__item + .mu-news__item { border-top: 1px solid var(--line); }
+.mu-news__item:hover { background: var(--mu-hover); }
+.mu-news__thumb {
+  flex: 0 0 auto; width: 62px; height: 62px; background: var(--mu-hover);
+  border-radius: 8px; display: flex; flex-direction: column; justify-content: space-between;
+  padding: 6px; color: var(--muted); overflow: hidden;
+}
+.mu-news__thumb[data-kind="up"] { color: var(--system); }
+.mu-news__thumb[data-kind="down"] { color: var(--danger); }
+.mu-news__thumblabel { font-family: var(--ds-font-mono); font-size: 10px; letter-spacing: 0.06em; color: var(--ink-soft); }
+.mu-news__spark { width: 100%; height: 18px; display: block; }
+.mu-news__col { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; gap: 5px; }
+.mu-news__meta { display: flex; align-items: center; gap: 8px; font-family: var(--ds-font-mono); font-size: 10.5px; color: var(--muted); flex-wrap: wrap; }
+.mu-news__src { color: var(--ink-soft); letter-spacing: 0.04em; white-space: nowrap; }
+.mu-news__meta .ds-dot { width: 4px; height: 4px; background: var(--muted); }
+.mu-news__tick {
+  padding: 1px 6px; border: 1px solid var(--line-strong); border-radius: var(--ds-radius-pill);
+  color: var(--ink-soft); font-size: 9.5px; letter-spacing: 0.06em;
+}
+.mu-news__head { margin: 0; font-size: 13.5px; line-height: 1.4; color: var(--ink); font-weight: 500; letter-spacing: -0.01em; text-wrap: pretty; }
+.mu-news__sum { margin: 0; font-size: 12px; line-height: 1.5; color: var(--muted); text-wrap: pretty; }
+.mu-news__more { display: flex; align-items: center; justify-content: center; gap: 8px; padding: 18px; color: var(--muted); font-family: var(--ds-font-mono); font-size: var(--ds-text-2xs); letter-spacing: var(--ds-tracking-wider); text-transform: uppercase; }
+
+/* ---- point-in-time releases ------------------------------------------- */
+.mu-rel { flex: 1 1 auto; display: flex; flex-direction: column; min-height: 0; }
+.mu-rel__head {
+  flex: 0 0 auto; display: flex; align-items: center; justify-content: space-between; gap: 10px;
+  padding: 4px 12px 9px;
+}
+.mu-rel__next { display: inline-flex; align-items: baseline; gap: 8px; min-width: 0; }
+.mu-rel__nextname { font-size: 12.5px; color: var(--ink); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.mu-rel__nextin { font-family: var(--ds-font-mono); font-size: 11px; color: var(--action); white-space: nowrap; }
+.mu-rel__list { flex: 1 1 auto; overflow-y: auto; min-height: 0; padding: 4px 0; }
+.mu-rel__nowmark { display: flex; align-items: center; gap: 10px; padding: 8px 12px; }
+.mu-rel__nowmark .ds-spec { color: var(--action); flex: 0 0 auto; }
+.mu-rel__nowmark::after { content: ""; flex: 1 1 auto; height: 1px; background: var(--action); opacity: 0.4; }
+.mu-rel__row { display: grid; grid-template-columns: 62px 16px 1fr; gap: 6px; padding: 10px 12px; transition: background var(--ds-motion-fast); }
+.mu-rel__row:hover { background: var(--mu-hover); }
+.mu-rel__when { display: flex; flex-direction: column; gap: 2px; padding-top: 1px; }
+.mu-rel__whenrel { font-family: var(--ds-font-mono); font-size: 10.5px; color: var(--muted); white-space: nowrap; }
+.mu-rel__whenper { font-family: var(--ds-font-mono); font-size: 9px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--ink-soft); white-space: nowrap; }
+.mu-rel__row[data-status="scheduled"] .mu-rel__whenrel { color: var(--ink-soft); }
+.mu-rel__rail { position: relative; display: flex; justify-content: center; }
+.mu-rel__rail::before { content: ""; position: absolute; top: -10px; bottom: -10px; left: 50%; width: 1px; background: var(--line); transform: translateX(-50%); }
+.mu-rel__dot { position: relative; z-index: 1; width: 8px; height: 8px; margin-top: 4px; border-radius: 50%; background: var(--paper); border: 1.5px solid var(--muted); }
+.mu-rel__row[data-status="released"] .mu-rel__dot { background: var(--system); border-color: var(--system); }
+.mu-rel__row[data-status="revised"] .mu-rel__dot { background: var(--warning); border-color: var(--warning); }
+.mu-rel__row[data-status="scheduled"] .mu-rel__dot { background: var(--paper); border-color: var(--ink-soft); }
+.mu-rel__row[data-imp="high"] .mu-rel__dot { width: 10px; height: 10px; margin-top: 3px; }
+.mu-rel__row[data-imp="low"] .mu-rel__dot { width: 7px; height: 7px; }
+.mu-rel__main { min-width: 0; display: flex; flex-direction: column; gap: 4px; }
+.mu-rel__top { display: flex; align-items: center; gap: 8px; }
+.mu-rel__series { flex: 1 1 auto; font-size: 12.5px; color: var(--ink); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.mu-rel__sub { display: flex; align-items: baseline; gap: 8px; }
+.mu-rel__vals { flex: 0 0 auto; display: inline-flex; align-items: baseline; gap: 6px; font-family: var(--ds-font-mono); font-size: 11px; white-space: nowrap; }
+.mu-rel__actual { color: var(--ink); font-variant-numeric: tabular-nums; }
+.mu-rel__fc { color: var(--muted); font-variant-numeric: tabular-nums; }
+.mu-reltag {
+  flex: 0 0 auto; font-family: var(--ds-font-mono); font-size: 9px; letter-spacing: 0.12em;
+  text-transform: uppercase; padding: 2px 7px; border-radius: var(--ds-radius-pill);
+  border: 1px solid transparent; white-space: nowrap;
+}
+.mu-reltag--released { color: var(--system); background: color-mix(in srgb, var(--system), transparent 88%); }
+.mu-reltag--revised { color: var(--warning); background: color-mix(in srgb, var(--warning), transparent 86%); }
+.mu-reltag--scheduled { color: var(--ink-soft); border-color: var(--line-strong); }
 
 /* ---- chat ------------------------------------------------------------- */
 .mu-chat {
@@ -241,7 +362,9 @@ body { overflow: hidden; }
   font-family: var(--ds-font-mark); font-size: 14px; font-weight: 700;
   text-transform: none; line-height: 1;
 }
-.mu-turn__col { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 8px; }
+/* nudge the text down so its first line centers vertically with the µ icon
+   (icon 26px tall vs. a ~21.6px first line → ~2px offset) */
+.mu-turn__col { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 8px; padding-top: 2px; }
 .mu-prose { font-size: 13.5px; line-height: 1.6; color: var(--ink); }
 /* markdown elements emitted by react-markdown for agent prose */
 .mu-prose > :first-child { margin-top: 0; }
@@ -305,9 +428,11 @@ body { overflow: hidden; }
 }
 .mu-composer__field:focus-within { border-color: var(--ink); }
 .mu-composer__input {
-  flex: 1; border: 0; background: transparent; outline: 0; resize: none;
+  flex: 1; min-width: 0; border: 0; background: transparent; outline: 0; resize: none;
   font-family: inherit; font-size: 13.5px; line-height: 1.5; color: var(--ink);
-  max-height: 96px; overflow-y: auto; padding: 6px 0;
+  /* single line — the pill keeps its shape no matter how long the input is;
+     long text scrolls horizontally inside, the caret stays in view */
+  height: 30px; white-space: nowrap; overflow: hidden; padding: 4px 0;
 }
 .mu-composer__input::placeholder { color: var(--muted); }
 .mu-composer__send {
@@ -319,12 +444,17 @@ body { overflow: hidden; }
 .mu-composer__send:hover { background: color-mix(in srgb, var(--action), var(--paper) 18%); }
 .mu-composer__send:disabled { opacity: 0.4; cursor: not-allowed; }
 
-/* ---- scrollbars (thin, on-brand) -------------------------------------- */
-.mu-chat__stream::-webkit-scrollbar, .mu-canvas::-webkit-scrollbar { width: 10px; height: 10px; }
-.mu-chat__stream::-webkit-scrollbar-thumb, .mu-canvas::-webkit-scrollbar-thumb {
+/* ---- scrollbars (thin, on-brand, transparent track) ------------------- */
+.mu-chat__stream::-webkit-scrollbar, .mu-grid::-webkit-scrollbar,
+.mu-news__list::-webkit-scrollbar, .mu-rel__list::-webkit-scrollbar { width: 10px; height: 10px; }
+.mu-chat__stream::-webkit-scrollbar-track, .mu-grid::-webkit-scrollbar-track,
+.mu-news__list::-webkit-scrollbar-track, .mu-rel__list::-webkit-scrollbar-track { background: transparent; }
+.mu-chat__stream::-webkit-scrollbar-thumb, .mu-grid::-webkit-scrollbar-thumb,
+.mu-news__list::-webkit-scrollbar-thumb, .mu-rel__list::-webkit-scrollbar-thumb {
   background: var(--line-strong); border: 3px solid transparent; background-clip: padding-box; border-radius: 999px;
 }
-.mu-chat__stream::-webkit-scrollbar-thumb:hover, .mu-canvas::-webkit-scrollbar-thumb:hover { background: var(--muted); background-clip: padding-box; }
+.mu-chat__stream::-webkit-scrollbar-thumb:hover, .mu-grid::-webkit-scrollbar-thumb:hover,
+.mu-news__list::-webkit-scrollbar-thumb:hover, .mu-rel__list::-webkit-scrollbar-thumb:hover { background: var(--muted); background-clip: padding-box; }
 
 /* hide TradingView attribution defensively (also disabled via chart option) */
 #tv-attr-logo, a[title*="TradingView"] { display: none !important; }

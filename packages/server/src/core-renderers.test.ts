@@ -1,20 +1,29 @@
 import { describe, expect, it } from "vitest";
-import { validateCompareSpec, validateMemoSpec, validatePriceChartSpec } from "./core-renderers.js";
+import {
+  validateCompareSpec,
+  validateMemoSpec,
+  validateNewsSpec,
+  validatePriceChartSpec,
+  validateReleasesSpec,
+} from "./core-renderers.js";
 
-describe("price_chart spec validation", () => {
-  it("accepts an empty spec and a well-formed overlay + volume", () => {
+describe("price_chart spec validation (catalog-driven indicators)", () => {
+  it("accepts an empty spec and well-formed catalog indicators", () => {
     expect(validatePriceChartSpec({}).ok).toBe(true);
-    expect(validatePriceChartSpec({ overlays: [{ kind: "sma", period: 50 }], volume: true }).ok).toBe(true);
-    expect(validatePriceChartSpec({ overlays: [{ kind: "ema", period: 12 }, { kind: "sma", period: 200 }] }).ok).toBe(true);
+    expect(validatePriceChartSpec({ indicators: [{ name: "sma", params: { period: 50 } }, { name: "volume" }] }).ok).toBe(true);
+    // params are optional (catalog defaults fill in); pane indicators like rsi/macd are valid
+    expect(validatePriceChartSpec({ indicators: [{ name: "ema" }, { name: "rsi" }, { name: "macd", params: { fast: 12, slow: 26, signal: 9 } }] }).ok).toBe(true);
+    expect(validatePriceChartSpec({ indicators: [{ name: "bollinger", params: { period: 20, mult: 2 } }] }).ok).toBe(true);
   });
 
-  it("rejects bad overlay kinds, non-integer/negative periods, and bad shapes", () => {
-    expect(validatePriceChartSpec({ overlays: "nope" }).ok).toBe(false);
-    expect(validatePriceChartSpec({ overlays: [{ kind: "rsi", period: 14 }] }).ok).toBe(false);
-    expect(validatePriceChartSpec({ overlays: [{ kind: "sma", period: 0 }] }).ok).toBe(false);
-    expect(validatePriceChartSpec({ overlays: [{ kind: "sma", period: 12.5 }] }).ok).toBe(false);
-    expect(validatePriceChartSpec({ overlays: [{ kind: "sma" }] }).ok).toBe(false);
-    expect(validatePriceChartSpec({ volume: "yes" }).ok).toBe(false);
+  it("rejects unknown indicators, unknown/out-of-range/non-integer params, and bad shapes", () => {
+    expect(validatePriceChartSpec({ indicators: "nope" }).ok).toBe(false);
+    expect(validatePriceChartSpec({ indicators: [{ name: "nonsense" }] }).ok).toBe(false);
+    expect(validatePriceChartSpec({ indicators: [{ name: "sma", params: { period: 0 } }] }).ok).toBe(false);
+    expect(validatePriceChartSpec({ indicators: [{ name: "sma", params: { period: 12.5 } }] }).ok).toBe(false);
+    expect(validatePriceChartSpec({ indicators: [{ name: "sma", params: { window: 50 } }] }).ok).toBe(false);
+    expect(validatePriceChartSpec({ indicators: [{ name: "bollinger", params: { mult: 99 } }] }).ok).toBe(false);
+    expect(validatePriceChartSpec({ indicators: [{ period: 50 }] }).ok).toBe(false);
   });
 });
 
@@ -32,5 +41,22 @@ describe("memo spec validation", () => {
     expect(validateMemoSpec({}).ok).toBe(true);
     expect(validateMemoSpec({ markdown: "# note" }).ok).toBe(true);
     expect(validateMemoSpec({ markdown: 42 }).ok).toBe(false);
+  });
+});
+
+describe("news spec validation", () => {
+  it("accepts empty + string query + positive limit, rejects bad types", () => {
+    expect(validateNewsSpec({}).ok).toBe(true);
+    expect(validateNewsSpec({ query: "NVDA", limit: 20 }).ok).toBe(true);
+    expect(validateNewsSpec({ query: 7 }).ok).toBe(false);
+    expect(validateNewsSpec({ limit: 0 }).ok).toBe(false);
+  });
+});
+
+describe("releases spec validation", () => {
+  it("accepts empty + string scope, rejects non-string", () => {
+    expect(validateReleasesSpec({}).ok).toBe(true);
+    expect(validateReleasesSpec({ scope: "macro" }).ok).toBe(true);
+    expect(validateReleasesSpec({ scope: 1 }).ok).toBe(false);
   });
 });

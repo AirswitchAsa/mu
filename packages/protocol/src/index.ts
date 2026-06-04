@@ -26,7 +26,15 @@ export type {
 export type { MuError, MuErrorCode } from "./errors.js";
 export { MuErrorException } from "./errors.js";
 export type { Window, Placement, PlacementPatch } from "./window.js";
-export type { CanvasOp, Emitter } from "./canvas-op.js";
-export { isLayoutOp, LAYOUT_OPS } from "./canvas-op.js";
+export type { CanvasOp, Emitter, TraceLine } from "./canvas-op.js";
+export { isLayoutOp, LAYOUT_OPS, traceFromOp } from "./canvas-op.js";
+export type {
+  IndicatorPlacement,
+  IndicatorParam,
+  IndicatorDef,
+  IndicatorSpec,
+  IndicatorValidation,
+} from "./indicators.js";
+export { INDICATORS, INDICATOR_BY_NAME, validateIndicators, resolveIndicatorParams } from "./indicators.js";
 export type { SessionState, CanvasState, ChatMessage, ProvenanceEntry } from "./session.js";
 export type { CanvasSummary, CanvasSummaryWindow } from "./canvas-summary.js";

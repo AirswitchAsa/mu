@@ -195,9 +195,15 @@ describe.skipIf(!LIVE)("µ server full loop (live DeepSeek + live Yahoo)", () =>
 
     // chat history survives the turn's canvas op (regression: assistant reply must be
     // stored on the post-op session, not a stale pre-op reference) — for reload-restore.
-    const hist = (await json(`${server.url}/api/sessions/${sessionId}/messages`)) as { messages: { role: string }[] };
+    const hist = (await json(`${server.url}/api/sessions/${sessionId}/messages`)) as {
+      messages: { role: string; ops?: { verb: string }[] }[];
+    };
     expect(hist.messages.some((m) => m.role === "user")).toBe(true);
-    expect(hist.messages.some((m) => m.role === "assistant")).toBe(true);
+    const assistant = hist.messages.find((m) => m.role === "assistant");
+    expect(assistant).toBeTruthy();
+    // the ops-trace is persisted on the assistant turn, so it survives a reload
+    // (data_fetch + canvas_create ran, so there is at least one line)
+    expect(assistant!.ops?.some((o) => o.verb.startsWith("canvas.") || o.verb.startsWith("data_"))).toBe(true);
   }, 120_000);
 
   // The acceptance gate for the whole UI loop, tested through the API/SSE with a
@@ -238,16 +244,16 @@ describe.skipIf(!LIVE)("µ server full loop (live DeepSeek + live Yahoo)", () =>
       expect(amzn, "a price_chart bound to an AMZN ohlcv handle").toBeTruthy();
       expect((await rowsOf(amzn!.bindings[0]!)).length).toBeGreaterThan(0);
 
-      // --- step 2: add a 50-day SMA overlay (spec update; same window, no refetch) ---
+      // --- step 2: add a 50-day SMA indicator (spec update; same window, no refetch) ---
       await send(
         sessionId,
-        `Add a 50-day simple moving average to the AMZN price chart by calling canvas_update on window ${amzn!.id} with spec {"overlays":[{"kind":"sma","period":50}]}.`,
+        `Add a 50-day simple moving average to the AMZN price chart by calling canvas_update on window ${amzn!.id} with spec {"indicators":[{"name":"sma","params":{"period":50}}]}.`,
       );
       const c2 = await canvasOf(sessionId);
       const amzn2 = c2.windows.find((w) => w.id === amzn!.id);
       expect(amzn2, "the AMZN window still exists (updated, not replaced)").toBeTruthy();
-      const overlays = (amzn2!.spec["overlays"] ?? []) as { kind?: string; period?: number }[];
-      expect(overlays.some((o) => o.kind === "sma" && o.period === 50)).toBe(true);
+      const indicators = (amzn2!.spec["indicators"] ?? []) as { name?: string; params?: { period?: number } }[];
+      expect(indicators.some((o) => o.name === "sma" && o.params?.period === 50)).toBe(true);
       expect(amzn2!.bindings).toEqual(amzn!.bindings); // binding unchanged → no re-resolve
 
       // --- step 3: compare AMZN with MSFT, indexed ---

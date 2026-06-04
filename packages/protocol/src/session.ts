@@ -1,3 +1,4 @@
+import type { TraceLine } from "./canvas-op.js";
 import type { Handle } from "./handle.js";
 import type { Provenance } from "./provenance.js";
 import type { Placement, Window } from "./window.js";
@@ -6,6 +7,9 @@ export interface ChatMessage {
   readonly role: "user" | "assistant";
   readonly text: string;
   readonly at: number;
+  /** The ops-trace for an assistant turn (canvas + data verbs), so it survives a
+   *  reload. Absent on user messages and on turns that ran no tools. */
+  readonly ops?: readonly TraceLine[];
 }
 
 /** One entry in the provenance trail: a window's binding back to a handle + stamp. */

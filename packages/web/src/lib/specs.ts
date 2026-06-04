@@ -1,4 +1,4 @@
-import { decodeHandle } from "@mu/protocol";
+import { decodeHandle, INDICATOR_BY_NAME, resolveIndicatorParams, type IndicatorDef } from "@mu/protocol";
 
 // =============================================================================
 // µ — renderer spec types (client mirror of the server-authoritative contract).
@@ -7,15 +7,8 @@ import { decodeHandle } from "@mu/protocol";
 // sane defaults so a missing/partial spec still renders.
 // =============================================================================
 
-export type OverlayKind = "sma" | "ema";
-export interface Overlay {
-  kind: OverlayKind;
-  period: number;
-}
-
 export interface PriceChartSpec {
-  overlays?: Overlay[];
-  volume?: boolean;
+  indicators?: { name: string; params?: Record<string, number> }[];
 }
 export interface CompareSpec {
   base?: number;
@@ -24,25 +17,40 @@ export interface MemoSpec {
   markdown?: string;
 }
 
-/** Read overlays defensively from an untyped spec (agent-authored). */
-export function overlaysOf(spec: Record<string, unknown> | undefined): Overlay[] {
-  const raw = spec?.["overlays"];
-  if (!Array.isArray(raw)) return [];
-  const out: Overlay[] = [];
-  for (const o of raw) {
-    if (o && typeof o === "object") {
-      const kind = (o as Record<string, unknown>)["kind"];
-      const period = (o as Record<string, unknown>)["period"];
-      if ((kind === "sma" || kind === "ema") && typeof period === "number" && period > 0) {
-        out.push({ kind, period });
-      }
-    }
-  }
-  return out;
+/** A price_chart indicator resolved against the catalog, ready to draw. */
+export interface ActiveIndicator {
+  readonly name: string;
+  readonly def: IndicatorDef;
+  readonly params: Record<string, number>;
+  /** stable identity for reconcile (name + ordered param values). */
+  readonly key: string;
+  /** "SMA 50", "BB 20/2", "MACD 12/26/9" — for the legend. */
+  readonly label: string;
 }
 
-export function showVolume(spec: Record<string, unknown> | undefined): boolean {
-  return spec?.["volume"] === true;
+/**
+ * Read the `indicators` list defensively from an untyped (agent-authored) spec,
+ * resolving each against the catalog and filling default params. Unknown names
+ * are dropped — the catalog is the gate, so the renderer never sees garbage.
+ */
+export function indicatorsOf(spec: Record<string, unknown> | undefined): ActiveIndicator[] {
+  const raw = spec?.["indicators"];
+  if (!Array.isArray(raw)) return [];
+  const out: ActiveIndicator[] = [];
+  for (const it of raw) {
+    if (!it || typeof it !== "object") continue;
+    const name = (it as Record<string, unknown>)["name"];
+    if (typeof name !== "string") continue;
+    const def = INDICATOR_BY_NAME.get(name);
+    if (!def) continue;
+    const rawParams = (it as Record<string, unknown>)["params"];
+    const params = resolveIndicatorParams(def, rawParams && typeof rawParams === "object" ? (rawParams as Record<string, number>) : undefined);
+    const values = def.params.map((p) => params[p.name]);
+    const key = `${name}:${values.join(":")}`;
+    const label = values.length ? `${def.label} ${values.join("/")}` : def.label;
+    out.push({ name, def, params, key, label });
+  }
+  return out;
 }
 
 export function compareBase(spec: Record<string, unknown> | undefined): number {

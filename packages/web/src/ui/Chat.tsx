@@ -94,21 +94,15 @@ export function Chat(props: {
     const text = draft.trim();
     if (!text || thinking || disabled) return;
     setDraft("");
-    if (taRef.current) taRef.current.style.height = "";
     onSend(text);
   };
 
   const onKey = (e: React.KeyboardEvent<HTMLTextAreaElement>): void => {
-    if (e.key === "Enter" && !e.shiftKey) {
+    if (e.key === "Enter") {
+      // single-line composer — Enter always sends, never inserts a newline
       e.preventDefault();
       submit();
     }
-  };
-
-  const autoGrow = (e: React.ChangeEvent<HTMLTextAreaElement>): void => {
-    setDraft(e.target.value);
-    e.target.style.height = "auto";
-    e.target.style.height = `${Math.min(140, e.target.scrollHeight)}px`;
   };
 
   return (
@@ -134,9 +128,10 @@ export function Chat(props: {
             ref={taRef}
             className="mu-composer__input"
             rows={1}
+            wrap="off"
             placeholder={disabled ? "agent not configured (set MU_MODEL)" : "ask µ"}
             value={draft}
-            onChange={autoGrow}
+            onChange={(e) => setDraft(e.target.value)}
             onKeyDown={onKey}
             disabled={disabled}
           />

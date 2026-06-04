@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
-import { MuErrorException, type CanvasOp } from "@mu/protocol";
-import { MuRuntime } from "@mu/runtime";
+import { MuErrorException, traceFromOp, type CanvasOp, type TraceLine } from "@mu/protocol";
+import { MuRuntime, type MuEvent } from "@mu/runtime";
 import { OpencodeDriver } from "@mu/opencode-plugin";
 import { coreRenderers } from "./core-renderers.js";
 
@@ -14,6 +14,8 @@ export interface MuServerOptions {
   model?: string;
   port?: number;
   hostname?: string;
+  /** Per-turn deadline (ms) for the agent; see OpencodeDriverOptions.timeoutMs. */
+  turnTimeoutMs?: number;
 }
 
 export interface MuServerHandle {
@@ -180,7 +182,13 @@ export async function createMuServer(opts: MuServerOptions): Promise<MuServerHan
       connection: "keep-alive",
       ...CORS,
     });
-    const send = (event: unknown): void => {
+    // Accumulate the turn's ops-trace as it streams, so we can persist it on the
+    // assistant message — otherwise the trace (a live-only SSE artifact) is lost
+    // on reload. Mirrors exactly what the client builds from the same events.
+    const ops: TraceLine[] = [];
+    const send = (event: MuEvent): void => {
+      if (event.type === "tool") ops.push({ verb: event.verb, arg: event.arg, ret: event.ret });
+      else if (event.type === "canvas") ops.push(traceFromOp(event.op));
       res.write(`data: ${JSON.stringify(event)}\n\n`);
     };
     const unsubscribe = runtime.subscribe(id, send);
@@ -192,11 +200,12 @@ export async function createMuServer(opts: MuServerOptions): Promise<MuServerHan
       // inject_canvas_state: the cheap summary rides along as an extra prompt part.
       const summary = runtime.canvasSummary(id);
       const reply = await driver.prompt(id, text, [`\n\n[µ canvas state] ${JSON.stringify(summary)}`]);
-      runtime.sessions.require(id).messages.push({ role: "assistant", text: reply, at: Date.now() });
+      runtime.sessions.require(id).messages.push({ role: "assistant", text: reply, at: Date.now(), ops: [...ops] });
       runtime.publish(id, { type: "chat", role: "assistant", text: reply });
       runtime.publish(id, { type: "done" });
     } catch (err) {
-      const code = err instanceof MuErrorException ? err.code : "FETCH_FAILED";
+      const code =
+        err instanceof MuErrorException ? err.code : err instanceof Error && err.name === "TurnTimeoutError" ? "TIMEOUT" : "FETCH_FAILED";
       runtime.publish(id, { type: "error", error: { code, message: err instanceof Error ? err.message : String(err) } });
     } finally {
       unsubscribe();
@@ -211,7 +220,7 @@ export async function createMuServer(opts: MuServerOptions): Promise<MuServerHan
 
   if (opts.model) {
     // The plugin's tools call back to this same server's /internal endpoint.
-    driver = await OpencodeDriver.start({ model: opts.model, callbackUrl: url });
+    driver = await OpencodeDriver.start({ model: opts.model, callbackUrl: url, timeoutMs: opts.turnTimeoutMs });
   }
 
   return {

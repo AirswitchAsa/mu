@@ -30,8 +30,8 @@ to components/data defined in these specs.
   @opencode-ai/sdk. The *only* package that knows opencode exists.
 - **@mu/server** — the composition root / entrypoint: boots `#MuRuntime`, loads
   resource plugins, **registers the core `&RendererManifest`s + spec validators**
-  (`core-renderers.ts`: `price_chart`, `compare`, `memo`), serves @mu/web, drives
-  opencode. The Docker image's main.
+  (`core-renderers.ts`: `price_chart`, `compare`, `memo`, `news`, `releases`),
+  serves @mu/web, drives opencode. The Docker image's main.
 - **@mu/web** — the `#WebClient`: grid canvas, chat panel, session rail, and the
   client-side renderer plugins (`src/renderers/*`, glob-registered by `type`,
   built on **Lightweight Charts**). Depends on @mu/protocol. *(The originally

@@ -33,3 +33,9 @@ arrangement; the `@User` retains exclusive, durable layout authority.
 - Settled policy: row-major gap-fill, per-type default sizes, **no reflow of
   pinned windows**. Once the `@User` touches a window's placement it is pinned
   and auto-layout leaves it alone thereafter.
+- **Grid model (as built):** the backend grid is `GRID_COLS = 3` and per-type
+  defaults use the S/M/L/XL ladder (charts → L = 2×2, list cards → M = 1×2). The
+  `#WebClient` re-derives the *displayed* column count from viewport width (2–4)
+  and flows the cards from their sizes, so absolute `col`/`row` are advisory for
+  the dashboard layout; size (`colSpan`×`rowSpan`) and window order are what drive
+  the visible grid.

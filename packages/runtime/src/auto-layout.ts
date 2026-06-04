@@ -1,18 +1,30 @@
 import type { Placement } from "@mu/protocol";
 
-/** Column count of the canvas grid. The canvas scrolls down without bound. */
-export const GRID_COLS = 12;
+/**
+ * Column count of the canvas grid. The client re-derives the *displayed* column
+ * count from viewport width (2–4) and lays cards out by flow; the backend grid is
+ * the small-column model the size ladder maps onto (max span = XL = 3). The canvas
+ * scrolls down without bound.
+ */
+export const GRID_COLS = 3;
 
-/** Per-type default window sizes (cols × rows). Unknown types get a sane default. */
+/**
+ * Per-type default window sizes on the S/M/L/XL ladder (cols × row-units):
+ *   S = 1×1 · M = 1×2 · L = 2×2 · XL = 3×3. Charts default to L (the comfortable
+ * 2-up tile); list cards (news/releases) default to M (one column, double height).
+ */
 const DEFAULT_SIZE: Record<string, { colSpan: number; rowSpan: number }> = {
-  price_chart: { colSpan: 8, rowSpan: 4 },
-  indicator_chart: { colSpan: 6, rowSpan: 3 },
-  table: { colSpan: 6, rowSpan: 4 },
-  memo: { colSpan: 4, rowSpan: 4 },
-  news_timeline: { colSpan: 4, rowSpan: 5 },
+  price_chart: { colSpan: 2, rowSpan: 2 }, // L
+  compare: { colSpan: 2, rowSpan: 2 }, // L
+  indicator_chart: { colSpan: 2, rowSpan: 2 }, // L
+  table: { colSpan: 2, rowSpan: 2 }, // L
+  memo: { colSpan: 1, rowSpan: 2 }, // M
+  news: { colSpan: 1, rowSpan: 2 }, // M
+  releases: { colSpan: 1, rowSpan: 2 }, // M
+  news_timeline: { colSpan: 1, rowSpan: 2 }, // M
 };
 
-const FALLBACK = { colSpan: 6, rowSpan: 3 };
+const FALLBACK = { colSpan: 2, rowSpan: 2 }; // L
 
 function overlaps(a: Placement, col: number, row: number, colSpan: number, rowSpan: number): boolean {
   return (

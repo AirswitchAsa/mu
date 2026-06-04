@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
-import type { CanvasOp, CanvasState, ChatMessage } from "@mu/protocol";
+import { traceFromOp, type CanvasOp, type CanvasState, type ChatMessage } from "@mu/protocol";
 import { handlesToResolve, reconcile } from "../lib/manifest";
+import { presetForSize } from "../lib/grid";
 import type { OhlcvRow } from "../lib/types";
 import { createSession, deleteSession, getCanvas, getMessages, postUserOps, resolveHandle, streamMessage } from "../lib/api";
 import type { RenderTheme } from "../renderers/types";
@@ -22,24 +23,9 @@ interface SessionView {
 }
 const emptyView = (): SessionView => ({ manifest: null, chat: [], thinking: false, pending: [] });
 
-/** Server chat history → view turns (ops aren't persisted, so restored turns have none). */
-const toTurn = (m: ChatMessage): ChatTurn => ({ role: m.role, text: m.text });
-
-/** A short ops-trace line derived from a canvas op (the agent's content moves). */
-function traceFromOp(op: CanvasOp): TraceLine {
-  switch (op.op) {
-    case "create":
-      return { verb: `canvas.create`, arg: `${op.type}${op.handle ? ` → ${String(op.handle)}` : ""}`, ret: "bound" };
-    case "update":
-      return { verb: `canvas.update`, arg: Object.keys(op.spec ?? {}).join(", ") || op.windowId, ret: "ok" };
-    case "bind":
-      return { verb: `canvas.bind`, arg: String(op.handle), ret: "bound" };
-    case "delete":
-      return { verb: `canvas.delete`, arg: op.windowId, ret: "ok" };
-    default:
-      return { verb: `canvas.${op.op}`, arg: op.windowId, ret: "ok" };
-  }
-}
+/** Server chat history → view turns. The ops-trace is now persisted server-side,
+ *  so restored assistant turns carry it too (traceFromOp is the shared builder). */
+const toTurn = (m: ChatMessage): ChatTurn => ({ role: m.role, text: m.text, ops: m.ops ? [...m.ops] : undefined });
 
 function ThemeToggle({ dark, onToggle }: { dark: boolean; onToggle: () => void }): JSX.Element {
   return (
@@ -248,19 +234,49 @@ export function App(): JSX.Element {
     [setView],
   );
 
-  const onMove = useCallback(
-    (winId: string, patch: { col: number; row: number }): void => {
-      patchManifest(activeId, (m) => ({ ...m, layout: { ...m.layout, [winId]: { ...m.layout[winId]!, ...patch, pinned: true } } }));
-      void postUserOps(activeId, [{ op: "move", windowId: winId, placement: patch }]);
-    },
-    [activeId, patchManifest],
-  );
-  const onResize = useCallback(
-    (winId: string, patch: { colSpan: number; rowSpan: number }): void => {
-      patchManifest(activeId, (m) => ({ ...m, layout: { ...m.layout, [winId]: { ...m.layout[winId]!, ...patch, pinned: true } } }));
+  // Size control: a size index → the preset's grid spans, applied as a resize op.
+  const onSize = useCallback(
+    (winId: string, sizeIndex: number): void => {
+      const patch = presetForSize(sizeIndex);
+      patchManifest(activeId, (m) => ({ ...m, layout: { ...m.layout, [winId]: { ...(m.layout[winId] ?? { col: 0, row: 0, ...patch, pinned: false }), ...patch, pinned: true } } }));
       void postUserOps(activeId, [{ op: "resize", windowId: winId, placement: patch }]);
     },
     [activeId, patchManifest],
+  );
+
+  // Drag-to-reorder: reorder the windows array optimistically during the drag, then
+  // persist the final order on drop with a single user `reorder` op.
+  const onReorder = useCallback(
+    (dragId: string, targetId: string, after: boolean): void => {
+      if (dragId === targetId) return;
+      patchManifest(activeId, (m) => {
+        const moving = m.windows.find((w) => w.id === dragId);
+        if (!moving) return m;
+        const rest = m.windows.filter((w) => w.id !== dragId);
+        const at = rest.findIndex((w) => w.id === targetId);
+        if (at < 0) return m;
+        rest.splice(after ? at + 1 : at, 0, moving);
+        return { ...m, windows: rest };
+      });
+    },
+    [activeId, patchManifest],
+  );
+  const onReorderCommit = useCallback(
+    (dragId: string): void => {
+      const m = prevManifest.current[activeId];
+      if (!m) return;
+      const idx = m.windows.findIndex((w) => w.id === dragId);
+      if (idx < 0) return;
+      // anchor to the new neighbor: prev sibling (after) or, if first, next sibling (before)
+      const op =
+        idx > 0
+          ? { op: "reorder" as const, windowId: dragId, targetId: m.windows[idx - 1]!.id, after: true }
+          : m.windows.length > 1
+            ? { op: "reorder" as const, windowId: dragId, targetId: m.windows[idx + 1]!.id, after: false }
+            : null;
+      if (op) void postUserOps(activeId, [op]);
+    },
+    [activeId],
   );
   const onClose = useCallback(
     (winId: string): void => {
@@ -308,8 +324,9 @@ export function App(): JSX.Element {
               dataVersion={dataVersion}
               theme={theme}
               themeKey={themeKey}
-              onMove={onMove}
-              onResize={onResize}
+              onSize={onSize}
+              onReorder={onReorder}
+              onReorderCommit={onReorderCommit}
               onClose={onClose}
             />
           </main>

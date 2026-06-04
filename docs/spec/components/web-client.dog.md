@@ -3,9 +3,9 @@
 ## Description
 
 The playground frontend (system-design.md §2), built as **@mu/web** (Vite +
-React + TS): a slim hover/click session **rail** (left), a dot-grid **canvas** of
-draggable/resizable windows (middle), and a **chat panel** (right). It is the
-`@User`'s window into a session — it renders the `#Canvas`'s windows, shows the
+React + TS): a slim hover/click session **rail** (left), a dot-grid **grid
+dashboard** of cards (middle), and a **chat panel** (right). It is the `@User`'s
+window into a session — it renders the `#Canvas`'s windows as cards, shows the
 conversation, and is where the `@User` exercises layout authority. It owns
 *layout*; it does not own *state* (that is the `#SessionStore` server-side).
 
@@ -13,14 +13,22 @@ conversation, and is where the `@User` exercises layout authority. It owns
 
 - **manifest** — the last server-authoritative `&SessionState` (canvas) per
   session; the client diffs each new one against it (see Events).
-- **grid** — window placements from the manifest `layout`, rendered onto a 12-col
-  grid ↔ pixels; the `@User` drags/resizes (sticky manual placement), and
-  `!auto_layout` fills gaps server-side for new content.
+- **grid** — a **responsive card dashboard**, not free-floating windows. The
+  client decides the column count from the available width (`colsForWidth`, ~3 on
+  a desktop, clamped 2–4) and each card spans cells per a universal **S/M/L/XL**
+  size ladder (S=1×1, M=1×2, L=2×2, XL=3×3 in `src/lib/grid.ts`); the board flows
+  from the sizes (`grid-auto-flow: dense`). A card's size is its manifest
+  `&Placement` `colSpan`×`rowSpan` (the backend `GRID_COLS` is now 3 = XL); the
+  `@User` steps it with the card's − / + (a `resize` op) and drags the bar to
+  reorder (a `reorder` op). `!auto_layout` still assigns a non-overlapping default
+  for new content.
 - **renderers** — a **client renderer registry**: `src/renderers/*/index.ts`
   plugins (`{ type, mount(el, ctx) → { update, retheme, destroy } }`) glob-
   registered by `type`. The server `&RendererManifest` is authoritative for which
   types/specs are valid; this map supplies the *draw code* (Lightweight Charts).
-  Each window is wrapped in an error boundary so one bad spec can't blank the app.
+  Each card is wrapped in an error boundary so one bad spec can't blank the app.
+  `news` + `releases` are drawn as React card bodies from baked sample data (their
+  live data plane is deferred — see `#Renderer`).
 - **rail** — a client-owned session list (names + status in `localStorage`)
   mapped onto live server session ids; a stale id (server restart) is re-created
   on demand. Right-click to rename/delete.
@@ -38,9 +46,12 @@ conversation, and is where the `@User` exercises layout authority. It owns
   `{ added, removed, updated(specChanged/bindingsChanged), layoutChanged }`, and
   resolves data (`!resolve`) only for added/rebound handles (cached by handle).
   This is the core of the client (`src/lib/manifest.ts`).
-- **layoutEdit(windowId, placement)** — drag/resize snaps to the grid on drop and
-  POSTs a `move`/`resize` `&CanvasOp` (only the `@User` may); close = a user
-  `delete` op (optimistic local patch).
+- **sizeStep(windowId, size)** — the card − / + maps a size index to the ladder's
+  spans and POSTs a `resize` `&CanvasOp` (user-only; optimistic local patch).
+- **reorder(dragId, targetId, after)** — dragging a card's bar reorders the cards
+  live (optimistic), then a single `reorder` `&CanvasOp` persists the final order
+  on drop. Close = a user `delete` op. (`move` exists in the contract but the grid
+  flow no longer uses absolute col/row positioning.)
 
 ## Notes
 
