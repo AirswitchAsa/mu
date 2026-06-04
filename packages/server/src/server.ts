@@ -22,6 +22,8 @@ export interface MuServerHandle {
   url: string;
   runtime: MuRuntime;
   driver?: OpencodeDriver;
+  /** shared secret required on the internal tool-callback endpoint. */
+  internalToken: string;
   close(): Promise<void>;
 }
 
@@ -47,7 +49,12 @@ function sendError(res: ServerResponse, err: unknown): void {
 async function readJson(req: IncomingMessage): Promise<Record<string, unknown>> {
   let body = "";
   for await (const chunk of req) body += chunk;
-  return body ? (JSON.parse(body) as Record<string, unknown>) : {};
+  if (!body) return {};
+  try {
+    return JSON.parse(body) as Record<string, unknown>;
+  } catch {
+    throw new MuErrorException("VALIDATION_FAILED", "request body is not valid JSON");
+  }
 }
 
 function listen(server: Server, port: number, hostname: string): Promise<void> {
@@ -67,6 +74,13 @@ export async function createMuServer(opts: MuServerOptions): Promise<MuServerHan
     renderers: coreRenderers,
   });
   let driver: OpencodeDriver | undefined;
+  // Shared secret for the opencode plugin's tool callback. Any other local process —
+  // or a browser page (CORS is open) — that POSTs /internal without it is rejected,
+  // so it can't drive the canvas or hammer rate-limited upstreams as if it were the agent.
+  const internalToken = randomUUID();
+  // One in-flight agent turn per session: a second concurrent /message is refused
+  // (409) rather than interleaving two turns' chat history and ops-traces.
+  const turnsInFlight = new Set<string>();
 
   const httpServer = createServer((req, res) => {
     void handle(req, res).catch((err) => sendError(res, err));
@@ -84,6 +98,10 @@ export async function createMuServer(opts: MuServerOptions): Promise<MuServerHan
 
     // --- internal: opencode plugin tool callback ---
     if (method === "POST" && seg[0] === "internal" && seg[1] === "tool" && seg[2]) {
+      if (req.headers["x-mu-internal-token"] !== internalToken) {
+        sendJson(res, 403, { error: { code: "FORBIDDEN", message: "internal endpoint requires the µ callback token" } });
+        return;
+      }
       const { sessionID, args } = await readJson(req);
       try {
         const ok = await runtime.handleToolCall(String(sessionID), seg[2], (args as Record<string, unknown>) ?? {});
@@ -188,6 +206,12 @@ export async function createMuServer(opts: MuServerOptions): Promise<MuServerHan
       sendJson(res, 400, { error: { code: "NO_DRIVER", message: "server started without a model; /message disabled" } });
       return;
     }
+    if (turnsInFlight.has(id)) {
+      sendJson(res, 409, { error: { code: "BUSY", message: "a turn is already in progress for this session" } });
+      return;
+    }
+    turnsInFlight.add(id);
+    const activeDriver = driver;
     const text = String(body["text"] ?? "");
     res.writeHead(200, {
       "content-type": "text/event-stream",
@@ -199,30 +223,48 @@ export async function createMuServer(opts: MuServerOptions): Promise<MuServerHan
     // assistant message — otherwise the trace (a live-only SSE artifact) is lost
     // on reload. Mirrors exactly what the client builds from the same events.
     const ops: TraceLine[] = [];
+    let settled = false; // the turn finished normally → ignore the end-of-stream close
+    let aborted = false; // the client went away mid-turn → stop writing + cancel the agent
     const send = (event: MuEvent): void => {
+      if (aborted) return;
       if (event.type === "tool") ops.push({ verb: event.verb, arg: event.arg, ret: event.ret });
       else if (event.type === "canvas") ops.push(traceFromOp(event.op));
       res.write(`data: ${JSON.stringify(event)}\n\n`);
     };
     const unsubscribe = runtime.subscribe(id, send);
+    // Client disconnect (tab close, navigation, network drop): unsubscribe and cancel
+    // the agent turn so it stops working — and stops spending — against a dead socket.
+    res.on("close", () => {
+      if (settled || aborted) return;
+      aborted = true;
+      unsubscribe();
+      void activeDriver.abort(id);
+    });
     try {
       // Re-`require` the session at each push: a canvas op during the turn replaces
       // the stored SessionState (clone-then-commit), so a reference captured earlier
       // goes stale and writes to it would be dropped from the store (lost on reload).
       runtime.sessions.require(id).messages.push({ role: "user", text, at: Date.now() });
+      runtime.sessions.persist(id);
       // inject_canvas_state: the cheap summary rides along as an extra prompt part.
       const summary = runtime.canvasSummary(id);
-      const reply = await driver.prompt(id, text, [`\n\n[µ canvas state] ${JSON.stringify(summary)}`]);
+      const reply = await activeDriver.prompt(id, text, [`\n\n[µ canvas state] ${JSON.stringify(summary)}`]);
+      if (aborted) return; // client gone — don't record/publish a turn nobody is listening to
       runtime.sessions.require(id).messages.push({ role: "assistant", text: reply, at: Date.now(), ops: [...ops] });
+      runtime.sessions.persist(id);
       runtime.publish(id, { type: "chat", role: "assistant", text: reply });
       runtime.publish(id, { type: "done" });
     } catch (err) {
-      const code =
-        err instanceof MuErrorException ? err.code : err instanceof Error && err.name === "TurnTimeoutError" ? "TIMEOUT" : "FETCH_FAILED";
-      runtime.publish(id, { type: "error", error: { code, message: err instanceof Error ? err.message : String(err) } });
+      if (!aborted) {
+        const code =
+          err instanceof MuErrorException ? err.code : err instanceof Error && err.name === "TurnTimeoutError" ? "TIMEOUT" : "FETCH_FAILED";
+        runtime.publish(id, { type: "error", error: { code, message: err instanceof Error ? err.message : String(err) } });
+      }
     } finally {
+      settled = true;
+      turnsInFlight.delete(id);
       unsubscribe();
-      res.end();
+      if (!res.writableEnded) res.end();
     }
   }
 
@@ -232,14 +274,21 @@ export async function createMuServer(opts: MuServerOptions): Promise<MuServerHan
   const url = `http://127.0.0.1:${port}`;
 
   if (opts.model) {
-    // The plugin's tools call back to this same server's /internal endpoint.
-    driver = await OpencodeDriver.start({ model: opts.model, callbackUrl: url, timeoutMs: opts.turnTimeoutMs });
+    // The plugin's tools call back to this same server's /internal endpoint, presenting
+    // `internalToken` as the shared secret.
+    driver = await OpencodeDriver.start({
+      model: opts.model,
+      callbackUrl: url,
+      callbackToken: internalToken,
+      timeoutMs: opts.turnTimeoutMs,
+    });
   }
 
   return {
     url,
     runtime,
     driver,
+    internalToken,
     close: async () => {
       driver?.close();
       await new Promise<void>((resolve) => httpServer.close(() => resolve()));

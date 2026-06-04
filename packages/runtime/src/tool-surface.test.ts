@@ -48,6 +48,25 @@ describe("ToolSurface dispatch", () => {
     expect(ts.getCanvasState("s1").windows).toHaveLength(1);
   });
 
+  it("data_view routes to broker.view with the handle + slice", async () => {
+    const { ts, broker } = surface();
+    broker.view.mockResolvedValueOnce({ handle: AMZN, summary: { rowCount: 2 }, rows: [{}, {}], degraded: false });
+    const res = (await ts.invoke("s1", "data_view", { handle: AMZN, slice: { last: 2 } })) as { rows: unknown[] };
+    expect(broker.view).toHaveBeenCalledWith(AMZN, { last: 2 });
+    expect(res.rows).toHaveLength(2);
+  });
+
+  it("data_list routes to broker.list and returns sources + datasets", async () => {
+    const { ts, broker } = surface();
+    broker.list.mockResolvedValueOnce([
+      { handle: AMZN, shape: "ohlcv", kind: "series", freshness: {}, rowCount: 2, sizeBytes: 10 },
+    ]);
+    const res = (await ts.invoke("s1", "data_list", {})) as { sources: unknown[]; datasets: { handle: string }[] };
+    expect(broker.list).toHaveBeenCalled();
+    expect(res.datasets.map((d) => d.handle)).toEqual([AMZN]);
+    expect(Array.isArray(res.sources)).toBe(true);
+  });
+
   it("rejects an unknown verb with a typed error", async () => {
     const { ts } = surface();
     await expect(ts.invoke("s1", "frobnicate", {})).rejects.toMatchObject({ code: "VALIDATION_FAILED" });

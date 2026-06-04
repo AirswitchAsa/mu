@@ -58,4 +58,9 @@ describe("cnbc news resource", () => {
     const out = await r.fetch({ shape: "news", entity: "markets" }, ctx);
     expect(out.payload[0]).toMatchObject({ source: "cnbc", tickers: undefined });
   });
+
+  it("rejects a non-feed (HTML error page served with HTTP 200) instead of yielding empty", async () => {
+    const r = createCnbcNews({ fetchText: async () => "<!DOCTYPE html><html><body>Not found</body></html>" });
+    await expect(r.fetch({ shape: "news", entity: "economy" }, ctx)).rejects.toThrow(/not an RSS/i);
+  });
 });

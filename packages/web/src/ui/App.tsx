@@ -102,6 +102,17 @@ export function App(): JSX.Element {
     setViews((prev) => ({ ...prev, [id]: fn(prev[id] ?? emptyView()) }));
   }, []);
 
+  // Drop cached rows for handles no longer bound by ANY window in ANY session — the
+  // cache is shared and would otherwise grow unbounded as charts/sessions close.
+  const evictCache = useCallback((): void => {
+    const live = new Set<string>();
+    for (const m of Object.values(prevManifest.current)) {
+      if (!m) continue;
+      for (const w of m.windows) for (const h of w.bindings) live.add(h);
+    }
+    for (const h of [...cache.current.keys()]) if (!live.has(h)) cache.current.delete(h);
+  }, []);
+
   const resolveNeeded = useCallback((handles: string[]): void => {
     const need = handles.filter((h) => !cache.current.has(h));
     if (!need.length) return;
@@ -123,8 +134,9 @@ export function App(): JSX.Element {
       prevManifest.current[id] = next;
       setView(id, (v) => ({ ...v, manifest: next }));
       resolveNeeded(handlesToResolve(reconcile(prev, next)));
+      evictCache(); // a manifest may have dropped windows → free their rows
     },
-    [setView, resolveNeeded],
+    [setView, resolveNeeded, evictCache],
   );
 
   // Load a session's canvas (recreating a stale id after a server restart).
@@ -261,7 +273,7 @@ export function App(): JSX.Element {
     async (id: string): Promise<void> => {
       void deleteSession(id).catch(() => undefined); // best-effort; client list is source of truth
       delete prevManifest.current[id];
-      // the row cache is keyed by handle and shared across sessions — nothing to evict
+      evictCache(); // free rows that were only bound by this session's windows
       setViews((prev) => {
         const next = { ...prev };
         delete next[id];
@@ -281,7 +293,7 @@ export function App(): JSX.Element {
         }
       }
     },
-    [sessions, activeId, ensureCanvas, applyManifest],
+    [sessions, activeId, ensureCanvas, applyManifest, evictCache],
   );
 
   // --- user layout / content edits ----------------------------------------

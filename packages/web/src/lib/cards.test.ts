@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { fmtValue, latestSnapshot, latestVintages, mergeNews, nextRelease, splitTickers } from "./cards";
+import { fmtValue, latestSnapshot, latestVintages, mergeNews, newsKey, nextRelease, splitTickers } from "./cards";
 import type { KeyStatsRow, NewsRow, ReleaseRow } from "./types";
 
 const stat = (field: string, asOf: number, group: string, value = "x"): KeyStatsRow => ({
@@ -42,6 +42,11 @@ describe("mergeNews", () => {
     const out = mergeNews([a, b]);
     expect(out).toHaveLength(2);
     expect(out.map((r) => r.source).sort()).toEqual(["cnbc", "yahoo"]);
+  });
+
+  it("newsKey is (source, id): the dedup key the React list key must reuse", () => {
+    expect(newsKey({ source: "yahoo", id: "7" })).toBe(newsKey({ source: "yahoo", id: "7" }));
+    expect(newsKey({ source: "yahoo", id: "7" })).not.toBe(newsKey({ source: "cnbc", id: "7" }));
   });
 });
 

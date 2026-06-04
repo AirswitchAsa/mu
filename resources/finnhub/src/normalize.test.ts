@@ -79,6 +79,25 @@ describe("finnhub resource", () => {
     });
   });
 
+  it("fills `previous` per event from the prior period's actual", async () => {
+    const hist = [
+      { period: "2026-03-31", quarter: 1, year: 2026, actual: 1.61, estimate: 1.67 },
+      { period: "2025-12-31", quarter: 4, year: 2025, actual: 1.95, estimate: 2.01 },
+    ];
+    const cal = { earningsCalendar: [{ date: "2026-07-29", epsEstimate: 1.85, quarter: 2, year: 2026, symbol: "AMZN" }] };
+    const fetchJson = async (url: string) => (url.includes("/stock/earnings") ? hist : cal);
+    const r = createFinnhubResource({ fetchJson, apiKey: "k" });
+    const out = await r.fetch({ shape: "releases", entity: "AMZN" }, ctx);
+    const byRef = Object.fromEntries(out.payload.map((p) => [p["reference_period"], p]));
+    expect(byRef["2026 Q1"]).toMatchObject({ actual: 1.61, previous: 1.95 }); // prior quarter actual
+    expect(byRef["2026 Q2"]).toMatchObject({ status: "scheduled", previous: 1.61 }); // last reported number
+  });
+
+  it("surfaces a finnhub {error} envelope (HTTP 200) as FETCH_FAILED", async () => {
+    const r = createFinnhubResource({ fetchJson: async () => ({ error: "API limit reached" }), apiKey: "k" });
+    await expect(r.fetch({ shape: "news", entity: "AMZN" }, ctx)).rejects.toThrow(/API limit reached/);
+  });
+
   it("builds a key_stats cross-section snapshot from profile2 + metric (friendly + formatted)", async () => {
     const profile = {
       name: "Amazon.com Inc",

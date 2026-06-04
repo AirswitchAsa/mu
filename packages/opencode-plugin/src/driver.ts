@@ -6,6 +6,8 @@ export interface OpencodeDriverOptions {
   model: string;
   /** the µ reverse-channel base URL the plugin's tools POST to. */
   callbackUrl: string;
+  /** shared secret the plugin must present on the µ /internal callback. */
+  callbackToken?: string;
   hostname?: string;
   port?: number;
   /** Per-turn deadline (ms). A `prompt` that exceeds it rejects with a
@@ -81,8 +83,9 @@ export class OpencodeDriver {
   ) {}
 
   static async start(opts: OpencodeDriverOptions): Promise<OpencodeDriver> {
-    // The plugin (in opencode's process) reads this to find the µ endpoint.
+    // The plugin (in opencode's process) reads these to find + authenticate to µ.
     process.env["MU_CALLBACK_URL"] = opts.callbackUrl;
+    if (opts.callbackToken) process.env["MU_CALLBACK_TOKEN"] = opts.callbackToken;
     // Only set hostname/port when provided — passing `undefined` makes the SDK
     // spawn `serve --hostname=undefined --port=0`, which fails to bind.
     const serverOpts: Parameters<typeof createOpencodeServer>[0] = {
@@ -137,6 +140,15 @@ export class OpencodeDriver {
 
   async deleteSession(id: string): Promise<void> {
     await this.client.session.delete({ path: { id } }).catch(() => undefined);
+  }
+
+  /**
+   * Cancel an in-flight turn (best-effort). Called when the client disconnects mid-SSE
+   * so the agent stops working — and stops spending — instead of running to completion
+   * against a dead socket.
+   */
+  async abort(id: string): Promise<void> {
+    await this.client.session.abort({ path: { id } }).catch(() => undefined);
   }
 
   /**

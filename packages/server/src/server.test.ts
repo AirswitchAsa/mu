@@ -4,7 +4,9 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import type { FetchResult } from "@mu/protocol";
+import { MuRuntime } from "@mu/runtime";
 import { createMuServer, type MuServerHandle } from "./server.js";
+import { coreRenderers } from "./core-renderers.js";
 
 const RESOURCES_DIR = join(dirname(fileURLToPath(import.meta.url)), "../../../resources");
 const HANDLE = "yfinance:ohlcv:AMZN:1d";
@@ -48,7 +50,7 @@ describe("µ server HTTP API (deterministic, no model)", () => {
     // simulate the opencode plugin calling back
     const created = (await json(`${server.url}/internal/tool/canvas_create`, {
       method: "POST",
-      headers: { "content-type": "application/json" },
+      headers: { "content-type": "application/json", "x-mu-internal-token": server.internalToken },
       body: JSON.stringify({ sessionID: sessionId, args: { type: "price_chart", handle: HANDLE } }),
     })) as { ok?: { windowId: string }; error?: unknown };
     expect(created.error).toBeUndefined();
@@ -86,7 +88,7 @@ describe("µ server HTTP API (deterministic, no model)", () => {
     // an agent canvas op commits via clone-then-replace, swapping the stored object
     await json(`${server.url}/internal/tool/canvas_create`, {
       method: "POST",
-      headers: { "content-type": "application/json" },
+      headers: { "content-type": "application/json", "x-mu-internal-token": server.internalToken },
       body: JSON.stringify({ sessionID: sessionId, args: { type: "price_chart", handle: HANDLE } }),
     });
 
@@ -119,10 +121,45 @@ describe("µ server HTTP API (deterministic, no model)", () => {
     const { sessionId } = (await json(`${server.url}/api/sessions`, { method: "POST" })) as { sessionId: string };
     const res = (await json(`${server.url}/internal/tool/frobnicate`, {
       method: "POST",
-      headers: { "content-type": "application/json" },
+      headers: { "content-type": "application/json", "x-mu-internal-token": server.internalToken },
       body: JSON.stringify({ sessionID: sessionId, args: {} }),
     })) as { error?: { code: string } };
     expect(res.error?.code).toBe("VALIDATION_FAILED");
+  });
+
+  it("rejects an internal tool callback without the shared token (403)", async () => {
+    const res = await fetch(`${server.url}/internal/tool/canvas_create`, {
+      method: "POST",
+      headers: { "content-type": "application/json" }, // no x-mu-internal-token
+      body: JSON.stringify({ sessionID: "s", args: { type: "price_chart" } }),
+    });
+    expect(res.status).toBe(403);
+    expect(((await res.json()) as { error?: { code: string } }).error?.code).toBe("FORBIDDEN");
+  });
+
+  it("returns 400 (not 500) for a malformed JSON request body", async () => {
+    const { sessionId } = (await json(`${server.url}/api/sessions`, { method: "POST" })) as { sessionId: string };
+    const res = await fetch(`${server.url}/api/sessions/${sessionId}/canvas/ops`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: "{not json",
+    });
+    expect(res.status).toBe(400);
+  });
+
+  it("persists sessions to disk and rehydrates them on restart", async () => {
+    // a session created on this server is mirrored under <dataRoot>/_sessions
+    const { sessionId } = (await json(`${server.url}/api/sessions`, { method: "POST" })) as { sessionId: string };
+    await json(`${server.url}/internal/tool/canvas_create`, {
+      method: "POST",
+      headers: { "content-type": "application/json", "x-mu-internal-token": server.internalToken },
+      body: JSON.stringify({ sessionID: sessionId, args: { type: "price_chart", handle: HANDLE } }),
+    });
+    // a fresh runtime over the SAME dataRoot reloads the persisted canvas
+    const revived = await MuRuntime.create({ dataRoot: root, resourcesDir: RESOURCES_DIR, renderers: coreRenderers });
+    const state = revived.getCanvasState(sessionId);
+    expect(state.windows.map((w) => w.type)).toEqual(["price_chart"]);
+    expect(state.windows[0]!.bindings).toEqual([HANDLE]);
   });
 });
 

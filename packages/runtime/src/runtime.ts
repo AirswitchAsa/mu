@@ -1,4 +1,5 @@
 import { EventEmitter } from "node:events";
+import { join } from "node:path";
 import {
   MuErrorException,
   type CanvasOp,
@@ -36,6 +37,11 @@ export interface MuRuntimeOptions {
   resourcesDir: string;
   /** core renderer manifests + validators (the frontend supplies these). */
   renderers?: RendererDef[];
+  /**
+   * Where to persist session state so it survives a server restart. Defaults to
+   * `<dataRoot>/_sessions`. Pass `null` to disable persistence (in-memory only).
+   */
+  sessionsDir?: string | null;
 }
 
 /**
@@ -75,7 +81,10 @@ export class MuRuntime {
     const coordinator = new AcquisitionCoordinator(resources, broker);
     const renderers = new RendererRegistry();
     for (const def of opts.renderers ?? []) renderers.register(def);
-    return new MuRuntime(broker, resources, renderers, new SessionStore(), coordinator);
+    const sessionsDir =
+      opts.sessionsDir === null ? undefined : opts.sessionsDir ?? join(opts.dataRoot, "_sessions");
+    const sessions = await SessionStore.load(sessionsDir);
+    return new MuRuntime(broker, resources, renderers, sessions, coordinator);
   }
 
   // --- session lifecycle (id == opencode session id; bind_sessions) ---

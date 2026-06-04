@@ -1,4 +1,4 @@
-import { splitTickers } from "../../lib/cards";
+import { newsKey, splitTickers } from "../../lib/cards";
 import { agoLabel } from "../../lib/timefmt";
 import type { NewsRow } from "../../lib/types";
 
@@ -55,7 +55,7 @@ export function NewsCard({ items, now }: { items: NewsRow[]; now: number }): JSX
         {items.length === 0 ? (
           <div className="mu-news__more ds-spec">no headlines yet — bind a news feed and refresh</div>
         ) : (
-          items.map((it) => <NewsRowView key={`${it.source}:${it.id}`} item={it} now={now} />)
+          items.map((it) => <NewsRowView key={newsKey(it)} item={it} now={now} />)
         )}
       </div>
     </div>

@@ -28,11 +28,45 @@ describe("fred resource", () => {
     expect(out.payload).toHaveLength(1);
     expect(out.payload[0]).toMatchObject({
       event: "GDP",
+      name: "Gross Domestic Product", // reader-friendly, never the raw id
       reference_period: "2026-01-01",
       status: "released",
       actual: 1.5,
+      unit: "Bil. of $",
       as_of: Date.parse("2026-06-01T12:00:00Z"),
     });
     expect(out.payload[0]!["forecast"]).toBeUndefined(); // FRED carries no consensus
+  });
+
+  it("carries the prior period as `previous` (FRED returns newest-first)", async () => {
+    const raw = {
+      observations: [
+        { realtime_start: "2026-06-01", date: "2026-02-01", value: "2.0" },
+        { realtime_start: "2026-06-01", date: "2026-01-01", value: "1.5" },
+      ],
+    };
+    const r = createFredResource({ fetchJson: async () => raw, apiKey: "k" });
+    const out = await r.fetch({ shape: "releases", entity: "CPIAUCSL" }, ctx);
+    const byRef = Object.fromEntries(out.payload.map((p) => [p["reference_period"], p]));
+    expect(byRef["2026-02-01"]).toMatchObject({ actual: 2.0, previous: 1.5 });
+    expect(byRef["2026-01-01"]!["previous"]).toBeUndefined(); // oldest → no prior
+  });
+
+  it("auto-names an unknown series from FRED metadata (no raw code leaks)", async () => {
+    const fetchJson = async (url: string) =>
+      url.includes("/series/observations")
+        ? { observations: [{ realtime_start: "2026-06-01", date: "2026-01-01", value: "3.3" }] }
+        : { seriess: [{ id: "WXYZ", title: "Some Niche Indicator", units_short: "Pct." }] };
+    const r = createFredResource({ fetchJson, apiKey: "k" });
+    const out = await r.fetch({ shape: "releases", entity: "WXYZ" }, ctx);
+    expect(out.payload[0]).toMatchObject({ event: "WXYZ", name: "Some Niche Indicator", unit: "Pct." });
+    expect(out.payload[0]!["name"]).not.toBe("WXYZ");
+  });
+
+  it("surfaces a FRED JSON error envelope as FETCH_FAILED (HTTP 200 + error_message)", async () => {
+    const fetchJson = async (url: string) =>
+      url.includes("/series/observations") ? { error_code: 400, error_message: "Bad Request. Invalid series_id." } : {};
+    const r = createFredResource({ fetchJson, apiKey: "k" });
+    await expect(r.fetch({ shape: "releases", entity: "NOPE" }, ctx)).rejects.toThrow(/Bad Request/);
   });
 });

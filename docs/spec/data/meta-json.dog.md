@@ -20,8 +20,9 @@ atomically by `!ingest` alongside the data files (see `!atomic_write`).
 - **freshness** — `{ firstT, lastT, fetchedAt }`: the time span the dataset
   covers and when it was last refreshed (drives staleness checks and
   `!cadence_refresh`).
-- **rowCount / snapshotCount** — element count (rows for series/event-list;
-  number of `asOf` snapshots for cross-section).
+- **rowCount** — logical rows in the dataset's current view: rows for
+  series/event-list, latest-vintage rows for point-in-time/cross-section
+  (one per `(event, reference)` / per field) — not the total accrued vintages.
 - **sizeBytes** — on-disk size, for the `!data_list` survey and
   `!evict_shared_cache`.
 - **contractVersion** — the data-contract version the records were written

@@ -43,6 +43,21 @@ describe("apply_canvas_op — content", () => {
     expect(w.provenanceRefs).toEqual([s.provenanceLog[0]?.id]);
   });
 
+  it("bind appends a compatible handle (bindings + provenance grow); rejects a shape mismatch", () => {
+    const d = deps();
+    const s = applyCanvasOps(empty(), [{ op: "create", type: "price_chart", handle: AMZN }], "agent", d);
+    const id = s.windows[0]!.id;
+    const MSFT = "yfinance:ohlcv:MSFT:1d";
+    const s2 = applyCanvasOps(s, [{ op: "bind", windowId: id, handle: MSFT }], "agent", d);
+    expect(s2.windows[0]!.bindings).toEqual([AMZN, MSFT]);
+    expect(s2.windows[0]!.provenanceRefs).toHaveLength(2);
+    expect(s2.provenanceLog).toHaveLength(2);
+    // a shape-incompatible handle is refused (price_chart only accepts ohlcv)
+    expect(() =>
+      applyCanvasOps(s2, [{ op: "bind", windowId: id, handle: "tiingo:news:AMZN" }], "agent", d),
+    ).toThrow(/does not accept shape/);
+  });
+
   it("update merges + revalidates the spec; delete clears layout + focus", () => {
     const d = deps();
     const s = applyCanvasOps(empty(), [{ op: "create", type: "price_chart", spec: { a: 1 }, handle: AMZN }], "agent", d);

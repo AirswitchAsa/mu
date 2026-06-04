@@ -21,9 +21,12 @@ const TOOL_TIMEOUT_MS = Number(process.env["MU_TOOL_TIMEOUT_MS"] ?? 60_000);
 async function call(verb: string, sessionID: string, args: Record<string, unknown>): Promise<unknown> {
   const base = process.env["MU_CALLBACK_URL"];
   if (!base) throw new Error("MU_CALLBACK_URL is not set; the µ endpoint is unknown.");
+  const headers: Record<string, string> = { "content-type": "application/json" };
+  const token = process.env["MU_CALLBACK_TOKEN"];
+  if (token) headers["x-mu-internal-token"] = token;
   const resp = await fetch(`${base}/internal/tool/${verb}`, {
     method: "POST",
-    headers: { "content-type": "application/json" },
+    headers,
     body: JSON.stringify({ sessionID, args }),
     signal: TOOL_TIMEOUT_MS > 0 ? AbortSignal.timeout(TOOL_TIMEOUT_MS) : undefined,
   });

@@ -24,4 +24,10 @@ describe("decodeSSE", () => {
     const { events } = decodeSSE(`data: {not json}\n\ndata: {"type":"done"}\n\n`);
     expect(events).toEqual([{ type: "done" }]);
   });
+
+  it("joins multiple data: lines in one frame before parsing (SSE multi-line payload)", () => {
+    const buf = `data: {"type":"chat",\ndata: "role":"assistant",\ndata: "text":"hi"}\n\n`;
+    const { events } = decodeSSE(buf);
+    expect(events).toEqual([{ type: "chat", role: "assistant", text: "hi" }]);
+  });
 });

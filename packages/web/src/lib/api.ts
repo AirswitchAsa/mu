@@ -100,46 +100,66 @@ export async function streamMessage(
     body: JSON.stringify({ text }),
     signal,
   });
+  // A non-2xx (e.g. NO_DRIVER, BUSY, server down) carries a JSON error body, not an
+  // SSE stream — surface it instead of silently "completing" with no reply.
+  if (!resp.ok) {
+    const detail = await resp.text().catch(() => "");
+    let message = `message request failed (${resp.status})`;
+    try {
+      const parsed = JSON.parse(detail) as { error?: { code?: string; message?: string } };
+      if (parsed.error) message = `${parsed.error.code ?? "ERROR"}: ${parsed.error.message ?? message}`;
+    } catch {
+      if (detail) message = detail;
+    }
+    throw new Error(message);
+  }
   if (!resp.body) throw new Error("message stream has no body");
   const reader = resp.body.getReader();
   const decoder = new TextDecoder();
   let buf = "";
-  for (;;) {
-    const { done, value } = await reader.read();
-    if (done) break;
-    buf += decoder.decode(value, { stream: true });
-    const { events, rest } = decodeSSE(buf);
-    buf = rest;
-    for (const e of events) {
-      onEvent(e as MuStreamEvent);
-      if (e && typeof e === "object" && ((e as { type?: string }).type === "done" || (e as { type?: string }).type === "error")) {
-        return;
+  try {
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buf += decoder.decode(value, { stream: true });
+      const { events, rest } = decodeSSE(buf);
+      buf = rest;
+      for (const e of events) {
+        onEvent(e as MuStreamEvent);
+        if (e && typeof e === "object" && ((e as { type?: string }).type === "done" || (e as { type?: string }).type === "error")) {
+          return;
+        }
       }
     }
+  } finally {
+    // Release the connection promptly on early return / error rather than leaving
+    // it for GC.
+    await reader.cancel().catch(() => undefined);
   }
 }
 
 /**
- * Pure SSE decoder: pull every COMPLETE `data:` event out of a buffer, returning
- * the parsed events plus the unconsumed remainder. Events are framed by a blank
- * line (`\n\n`); the trailing partial frame stays in `rest`.
+ * Pure SSE decoder: pull every COMPLETE event out of a buffer, returning the parsed
+ * events plus the unconsumed remainder. Events are framed by a blank line (`\n\n`);
+ * the trailing partial frame stays in `rest`. Per the SSE spec, multiple `data:`
+ * lines in one frame are concatenated with `\n` before parsing (so a large payload
+ * split across lines decodes correctly, not just the first line).
  */
 export function decodeSSE(buffer: string): { events: unknown[]; rest: string } {
   const frames = buffer.split("\n\n");
   const rest = frames.pop() ?? "";
   const events: unknown[] = [];
   for (const frame of frames) {
-    for (const line of frame.split("\n")) {
-      if (line.startsWith("data:")) {
-        const payload = line.slice(5).trimStart();
-        if (payload) {
-          try {
-            events.push(JSON.parse(payload));
-          } catch {
-            /* skip a malformed frame rather than break the stream */
-          }
-        }
-      }
+    const payload = frame
+      .split("\n")
+      .filter((line) => line.startsWith("data:"))
+      .map((line) => line.slice(5).replace(/^ /, "")) // strip one optional leading space
+      .join("\n");
+    if (!payload) continue;
+    try {
+      events.push(JSON.parse(payload));
+    } catch {
+      /* skip a malformed frame rather than break the stream */
     }
   }
   return { events, rest };

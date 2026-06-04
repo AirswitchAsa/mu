@@ -14,8 +14,8 @@ MU_MODEL=deepseek/deepseek-chat PORT=4000 pnpm start
 ```
 
 Env: `PORT` (4000) · `MU_DATA_ROOT` (`./.mu-data`) · `MU_RESOURCES_DIR` (`./resources`) ·
-`MU_MODEL` (`deepseek/deepseek-chat`; needs that provider authed in opencode).
-Omit `MU_MODEL` to run API-only (no agent; `/message` returns `NO_DRIVER`).
+`MU_MODEL` (e.g. `deepseek/deepseek-chat`; needs that provider authed in opencode).
+Leave `MU_MODEL` unset (or empty) to run API-only — no agent; `/message` returns `NO_DRIVER`.
 
 All responses are JSON unless noted. Errors are `{ "error": { "code", "message" } }`
 with `code` from the typed set (`VALIDATION_FAILED`, `HANDLE_NOT_FOUND`,
@@ -36,6 +36,14 @@ with `code` from the typed set (`VALIDATION_FAILED`, `HANDLE_NOT_FOUND`,
 | `GET` | `/api/sessions/:id/messages` | — | `{ messages: ChatMessage[] }` — chat history for reload-restore (`{ role, text, at }`) |
 | `GET` | `/api/sessions/:id/title` | — | `{ title: string \| null }` — opencode's auto-generated session title (null if unset / no driver) |
 | `POST` | `/api/sessions/:id/canvas/ops` | `{ ops: CanvasOp[] }` | `{ summary }` — **user** ops (incl. `move`/`resize`/`reorder`) |
+| `POST` | `/api/sessions/:id/refresh` | `{ handles?: Handle[] }` | `{ refreshed: Handle[], errors: [{ handle, code?, message }] }` |
+
+**Refresh** re-acquires bound handles from their sources (same fetch+merge as the
+agent's `data_fetch`), the handle string unchanged so a bound card sees fresh rows on
+re-resolve. With no `handles`, every data-backed handle in the session is refreshed.
+Each handle is isolated — one failure (rate-limit, unconfigured key) is reported in
+`errors` and never blocks the rest. For `releases`/`key_stats` a refresh accrues a new
+vintage rather than overwriting. The client re-resolves exactly the `refreshed` handles.
 
 `Window`: `{ id, type, title, spec, bindings: Handle[], provenanceRefs }`.
 `layout[windowId]`: `{ col, row, colSpan, rowSpan, pinned }`. The user owns layout;
@@ -44,9 +52,10 @@ canvas out as a responsive **grid dashboard**: card size = `colSpan`×`rowSpan` 
 an S/M/L/XL ladder (backend grid is 3 cols), and `reorder(windowId, targetId,
 after)` moves a window before/after a target in window order.
 
-> Session state (canvas + messages) is **in-memory** in v0: it survives a browser
-> reload (re-fetch canvas + messages) but **not a server restart**. The web client
-> maps its own localStorage session list onto live ids and re-creates a stale id.
+> Session state (canvas + messages) is held in memory and **mirrored to disk**
+> (`<MU_DATA_ROOT>/_sessions/<id>.json`, atomic, best-effort), so it survives a server
+> restart as well as a browser reload. The web client maps its own localStorage
+> session list onto live ids; a genuinely stale id (e.g. data dir wiped) is re-created.
 
 ## Message (SSE)
 
@@ -96,7 +105,10 @@ epoch-**seconds**, so divide by 1000 in the renderer.
 ## Internal (not for the frontend)
 
 `POST /internal/tool/:verb` is the localhost callback the opencode plugin uses to
-reach the runtime (`data_*`, `canvas_*`, `get_canvas_state`, `renderer_list`).
-Frontends ignore it. The agent calls `renderer_list` to discover the window types
+reach the runtime (`data_*`, `canvas_*`, `get_canvas_state`, `renderer_list`). It
+requires a per-process shared secret in the `x-mu-internal-token` header (generated at
+boot, injected into the plugin) — a request without it gets `403`, so a stray local
+process or browser page can't drive the canvas. Frontends ignore this endpoint. The
+agent calls `renderer_list` to discover the window types
 it may create, each one's `spec` options, and the data shape it requires — the same
 manifests `GET /api/renderers` advertises to the web client.

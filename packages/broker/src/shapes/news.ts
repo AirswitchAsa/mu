@@ -57,6 +57,17 @@ function checkRow(row: unknown, i: number, errors: ValidationError[]): void {
   if (typeof r["headline"] !== "string" || r["headline"].length === 0) {
     errors.push({ path: `[${i}].headline`, message: "headline must be a non-empty string" });
   }
+  // optional strings must be strings when present (trust-but-verify at ingest).
+  for (const f of ["summary", "url", "tickers", "image_url"] as const) {
+    const v = r[f];
+    if (v !== undefined && v !== null && typeof v !== "string") {
+      errors.push({ path: `[${i}].${f}`, message: "must be a string when present" });
+    }
+  }
+  const s = r["sentiment"];
+  if (s !== undefined && s !== null && (typeof s !== "number" || !Number.isFinite(s) || s < -1 || s > 1)) {
+    errors.push({ path: `[${i}].sentiment`, message: "must be a finite number in [-1, 1] when present" });
+  }
 }
 
 /**

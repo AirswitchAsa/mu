@@ -51,6 +51,10 @@ function checkRow(row: unknown, i: number, errors: ValidationError[]): void {
   if (typeof t !== "number" || !Number.isInteger(t)) {
     errors.push({ path: `[${i}].as_of`, message: "must be an integer epoch-ms" });
   }
+  const g = r["group"];
+  if (g !== undefined && g !== null && typeof g !== "string") {
+    errors.push({ path: `[${i}].group`, message: "must be a string when present" });
+  }
 }
 
 /**

@@ -24,6 +24,12 @@ const realFetchText: FetchText = async (url) => {
   return r.text();
 };
 
+/** A feed body carries one of these; an error/HTML page (served with HTTP 200) does not. */
+function looksLikeFeed(body: string): boolean {
+  const head = body.slice(0, 4096).toLowerCase();
+  return head.includes("<rss") || head.includes("<feed") || head.includes("<item") || head.includes("<entry");
+}
+
 const SUMMARY_MAX = 320;
 
 /** RSS items → canonical `news` records for `source`, tagged with `tickers`. */
@@ -77,6 +83,11 @@ function rssResource(spec: RssSpec, fetchText: FetchText): Resource {
       }
       const entity = params.entity;
       const xml = await fetchText(spec.urlFor(entity));
+      if (!looksLikeFeed(xml)) {
+        // A non-feed body (HTML error page, redirect) returned with HTTP 200 — make the
+        // source's brokenness visible instead of silently yielding "no headlines".
+        throw new MuErrorException("FETCH_FAILED", `${spec.id}: response was not an RSS/Atom feed`);
+      }
       const payload = toNews(parseRss(xml), spec.source, spec.tickersFor(entity));
       return {
         descriptor: {
@@ -112,15 +123,18 @@ export function createYahooNews(deps: { fetchText?: FetchText } = {}): Resource 
 }
 
 // --- CNBC: general/section wires (entity = a feed slug) -----------------------
+// Feed ids verified against the live CNBC RSS titles. CNBC has no dedicated "markets"
+// feed, so `markets` aliases the Investing wire (closest market coverage); `economy`
+// is its own feed (id 20910258 is "Economy", not markets).
 const CNBC_FEEDS: Record<string, string> = {
   top: "100003114",
-  markets: "20910258",
   business: "10001147",
   economy: "20910258",
   finance: "10000664",
+  investing: "15839069",
+  markets: "15839069", // alias → Investing
   technology: "19854910",
   earnings: "15839135",
-  investing: "15839069",
 };
 const CNBC_SLUGS = Object.keys(CNBC_FEEDS).join("|");
 

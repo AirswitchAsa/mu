@@ -25,7 +25,7 @@ a provider*, so any source that produces a shape just works. The card is chosen 
 
 | Card | Shape | Answers | Sources |
 |---|---|---|---|
-| Price chart | `ohlcv` | price action + 20 technical indicators | Yahoo |
+| Price chart | `ohlcv` | price action + 21 technical indicators | Yahoo |
 | Comparison | `ohlcv` | indexed relative performance | Yahoo |
 | News wire | `news` | headlines / catalysts (aggregated, labeled) | Yahoo, CNBC, Finnhub |
 | Release calendar | `releases` | expected vs actual, by date (bitemporal) | Finnhub earnings, FRED macro |

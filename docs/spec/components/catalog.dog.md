@@ -11,7 +11,7 @@ every call. It is built from the `&MetaJson` sidecars and kept in sync on every
 ## State
 
 - **entries** — one record per `&Handle`: shape, kind, freshness
-  (`firstT`/`lastT`/`fetchedAt`), `rowCount`/`snapshotCount`, `sizeBytes` —
+  (`firstT`/`lastT`/`fetchedAt`), `rowCount`, `sizeBytes` —
   i.e. the survey fields of `&MetaJson`, never the data leaves. One flat,
   instance-wide index — no per-session partition (all data is shared).
 - **lastAccess** — per-entry access timestamp, feeding `!evict_shared_cache`.

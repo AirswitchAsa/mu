@@ -18,8 +18,46 @@ export type FetchJson = (url: string) => Promise<unknown>;
 const realFetchJson: FetchJson = async (url) => {
   const r = await fetch(url, { headers: { accept: "application/json" } });
   if (!r.ok) throw new MuErrorException("FETCH_FAILED", `HTTP ${r.status} from finnhub`);
-  return r.json();
+  try {
+    return await r.json();
+  } catch {
+    throw new MuErrorException("FETCH_FAILED", "finnhub: non-JSON response (rate-limited or upstream error)");
+  }
 };
+
+/**
+ * Finnhub can answer HTTP 200 with `{ "error": "..." }` (invalid symbol, rate limit on
+ * the free tier). Surface it as a typed error instead of silently returning empty.
+ */
+function assertOk(raw: unknown): unknown {
+  if (raw && typeof raw === "object" && !Array.isArray(raw)) {
+    const e = (raw as { error?: unknown }).error;
+    if (typeof e === "string" && e.length > 0) throw new MuErrorException("FETCH_FAILED", `finnhub: ${e}`);
+  }
+  return raw;
+}
+
+/**
+ * Fill `previous` per event from the prior period's actual (chronological order). A
+ * scheduled row's `previous` is therefore the last reported number — handy on the card.
+ */
+function withPrevious(rows: Record<string, unknown>[]): Record<string, unknown>[] {
+  const byEvent = new Map<string, Record<string, unknown>[]>();
+  for (const r of rows) {
+    const e = r["event"] as string;
+    const list = byEvent.get(e);
+    if (list) list.push(r);
+    else byEvent.set(e, [r]);
+  }
+  for (const list of byEvent.values()) {
+    list.sort((a, b) => (a["release_time"] as number) - (b["release_time"] as number));
+    for (let i = 1; i < list.length; i++) {
+      const prevActual = list[i - 1]!["actual"];
+      if (typeof prevActual === "number") list[i]!["previous"] = prevActual;
+    }
+  }
+  return rows;
+}
 
 const DAY_MS = 86_400_000;
 const ymd = (ms: number): string => new Date(ms).toISOString().slice(0, 10);
@@ -262,7 +300,7 @@ export function createFinnhubResource(deps: { fetchJson?: FetchJson; apiKey?: st
         const from = ymd(now - 7 * DAY_MS);
         const to = ymd(now);
         const url = `https://finnhub.io/api/v1/company-news?symbol=${encodeURIComponent(entity)}&from=${from}&to=${to}&token=${token}`;
-        const raw = (await fetchJson(url)) as FinnhubNews[];
+        const raw = assertOk(await fetchJson(url)) as FinnhubNews[];
         const payload = newsRecords(Array.isArray(raw) ? raw : [], entity);
         return {
           descriptor: { shape: "news", identity: { provider: "finnhub", shape: "news", entity, tail: [] }, queryParams: { entity } },
@@ -281,8 +319,8 @@ export function createFinnhubResource(deps: { fetchJson?: FetchJson; apiKey?: st
         const histUrl = `https://finnhub.io/api/v1/stock/earnings?symbol=${enc}&limit=40&token=${token}`;
         const calUrl = `https://finnhub.io/api/v1/calendar/earnings?symbol=${enc}&from=${from}&to=${to}&token=${token}`;
         const [histRaw, calRaw] = await Promise.all([
-          fetchJson(histUrl) as Promise<FinnhubSurprise[]>,
-          fetchJson(calUrl) as Promise<{ earningsCalendar?: FinnhubEarning[] }>,
+          fetchJson(histUrl).then(assertOk) as Promise<FinnhubSurprise[]>,
+          fetchJson(calUrl).then(assertOk) as Promise<{ earningsCalendar?: FinnhubEarning[] }>,
         ]);
         const hist = surpriseRecords(Array.isArray(histRaw) ? histRaw : [], entity, now);
         const cal = earningsRecords(calRaw?.earningsCalendar ?? [], entity, now);
@@ -294,7 +332,7 @@ export function createFinnhubResource(deps: { fetchJson?: FetchJson; apiKey?: st
           const prev = byRef.get(k);
           if (!prev || (r["actual"] !== undefined && prev["actual"] === undefined)) byRef.set(k, r);
         }
-        const payload = [...byRef.values()];
+        const payload = withPrevious([...byRef.values()]);
         return {
           descriptor: { shape: "releases", identity: { provider: "finnhub", shape: "releases", entity, tail: [] }, queryParams: { entity } },
           provenance: { source: "finnhub", fetchedAt: now, trigger: ctx.trigger, queryParams: { entity }, upstream: { from, to } },

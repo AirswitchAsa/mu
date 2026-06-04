@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   validateCompareSpec,
+  validateKeyStatsSpec,
   validateMemoSpec,
   validateNewsSpec,
   validatePriceChartSpec,
@@ -58,5 +59,13 @@ describe("releases spec validation", () => {
     expect(validateReleasesSpec({}).ok).toBe(true);
     expect(validateReleasesSpec({ scope: "macro" }).ok).toBe(true);
     expect(validateReleasesSpec({ scope: 1 }).ok).toBe(false);
+  });
+});
+
+describe("key_stats spec validation", () => {
+  it("accepts empty + string scope, rejects non-string", () => {
+    expect(validateKeyStatsSpec({}).ok).toBe(true);
+    expect(validateKeyStatsSpec({ scope: "valuation" }).ok).toBe(true);
+    expect(validateKeyStatsSpec({ scope: 1 }).ok).toBe(false);
   });
 });

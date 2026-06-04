@@ -23,9 +23,12 @@ export interface MetaJson {
   readonly descriptor: ResourceDescriptor;
   readonly provenance: Provenance;
   readonly freshness: Freshness;
-  /** rows for series/event-list; number of asOf snapshots for cross-section. */
+  /**
+   * Logical rows in the dataset's current view: the row count for series/event-list,
+   * and the latest-vintage row count for point-in-time/cross-section (one per
+   * (event, reference) / per field) — not the total accrued vintage count.
+   */
   readonly rowCount?: number;
-  readonly snapshotCount?: number;
   readonly sizeBytes: number;
   readonly contractVersion: number;
 }
