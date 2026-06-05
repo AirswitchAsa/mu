@@ -26,6 +26,12 @@ export type MuEvent =
   | { type: "canvas"; op: CanvasOp; state: CanvasState }
   // A data verb the agent ran this turn — surfaced for the ops-trace, never bulk.
   | { type: "tool"; verb: string; arg: string; ret: string }
+  // Incremental prose/reasoning as the agent writes it (WS1 streaming). `text` is the
+  // CUMULATIVE content of the part `partId` so an update is idempotent (a dropped frame
+  // self-heals on the next one); the client upserts by `partId`, interleaving with
+  // `tool`/`canvas` events in receipt order. The terminal `chat` event still carries
+  // the authoritative final text for persistence.
+  | { type: "chat_delta"; partId: string; kind: "text" | "reasoning"; text: string }
   | { type: "chat"; role: "assistant" | "user"; text: string }
   | { type: "done" }
   | { type: "error"; error: { code?: string; message: string } };
