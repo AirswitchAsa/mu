@@ -87,9 +87,40 @@ export class MuRuntime {
     return new MuRuntime(broker, resources, renderers, sessions, coordinator);
   }
 
-  // --- session lifecycle (id == opencode session id; bind_sessions) ---
-  createSession(id: string): SessionState {
-    return this.sessions.create(id);
+  // --- session lifecycle (decoupled: µ id is authoritative, opencode is a
+  //     disposable executor bound via opencodeSessionId; bind_sessions) ---
+  /**
+   * Create a µ session under its own stable `id`. `opencodeSessionId` is the
+   * opencode session minted for it (when a driver exists); leave undefined for
+   * API-only sessions. On a later opencode miss the server re-mints and calls
+   * `bindOpencodeSession` to rebind — the µ `id` never changes.
+   */
+  createSession(id: string, opencodeSessionId?: string): SessionState {
+    const state = this.sessions.create(id);
+    if (opencodeSessionId && state.opencodeSessionId !== opencodeSessionId) {
+      state.opencodeSessionId = opencodeSessionId;
+      this.sessions.persist(id);
+    }
+    return state;
+  }
+  /**
+   * Rebind a µ session to a freshly minted opencode session (reconcile-on-miss)
+   * and persist, so the new binding survives the next restart. Returns the
+   * updated SessionState.
+   */
+  bindOpencodeSession(id: string, opencodeSessionId: string): SessionState {
+    const state = this.sessions.require(id);
+    state.opencodeSessionId = opencodeSessionId;
+    this.sessions.persist(id);
+    return state;
+  }
+  /**
+   * Resolve a µ session id to the opencode id to drive. Falls back to the µ id
+   * itself for legacy/rehydrated sessions that predate the decouple (where the
+   * field is absent and the two ids were 1:1).
+   */
+  resolveOpencodeId(id: string): string {
+    return this.sessions.get(id)?.opencodeSessionId ?? id;
   }
   deleteSession(id: string): boolean {
     this.bus.removeAllListeners(`s:${id}`);

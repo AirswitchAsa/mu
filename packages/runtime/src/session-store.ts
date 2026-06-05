@@ -3,9 +3,11 @@ import { join } from "node:path";
 import { MuErrorException, type SessionState } from "@mu/protocol";
 
 /**
- * SessionStore — all live sessions' SessionState (session-store.dog.md). A µ
- * session id maps 1:1 to an opencode session id. Holds bindings, never data;
- * dropping a session touches no broker data.
+ * SessionStore — all live sessions' SessionState (session-store.dog.md). The µ
+ * session id is authoritative and stable; the opencode session it currently
+ * drives is recorded separately as `opencodeSessionId` (re-mintable, see
+ * reconcile-on-miss) — no longer 1:1. Holds bindings, never data; dropping a
+ * session touches no broker data.
  *
  * Optionally durable: given a `dir`, each session is mirrored to `<dir>/<id>.json`
  * (atomic temp-then-rename, best-effort) and rehydrated via `load()` on boot, so a
