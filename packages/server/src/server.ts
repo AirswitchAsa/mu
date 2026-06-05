@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
-import { MuErrorException, traceFromOp, type CanvasOp, type TraceLine } from "@mu/protocol";
+import { MuErrorException, traceFromOp, type CanvasOp, type TraceLine, type TurnItem } from "@mu/protocol";
 import { MuRuntime, type MuEvent } from "@mu/runtime";
 import { OpencodeDriver } from "@mu/opencode-plugin";
 import { coreRenderers } from "./core-renderers.js";
@@ -223,12 +223,36 @@ export async function createMuServer(opts: MuServerOptions): Promise<MuServerHan
     // assistant message — otherwise the trace (a live-only SSE artifact) is lost
     // on reload. Mirrors exactly what the client builds from the same events.
     const ops: TraceLine[] = [];
+    // The INTERLEAVED timeline (conversation-experience): prose/reasoning + tool rows
+    // in receipt order, persisted so a restored turn renders identically to the live
+    // stream (live≡reload). text/reasoning items are upserted by partId (first-seen
+    // fixes position, later deltas replace the cumulative text); a tool item is
+    // appended for each `tool`/`canvas` event — the same accumulation that feeds `ops`.
+    const items: TurnItem[] = [];
+    const itemIndexByPart = new Map<string, number>();
+    const upsertPart = (partId: string, kind: "text" | "reasoning", text: string): void => {
+      const at = itemIndexByPart.get(partId);
+      if (at === undefined) {
+        itemIndexByPart.set(partId, items.length);
+        items.push({ kind, id: partId, text });
+      } else {
+        items[at] = { kind, id: partId, text };
+      }
+    };
     let settled = false; // the turn finished normally → ignore the end-of-stream close
     let aborted = false; // the client went away mid-turn → stop writing + cancel the agent
     const send = (event: MuEvent): void => {
       if (aborted) return;
-      if (event.type === "tool") ops.push({ verb: event.verb, arg: event.arg, ret: event.ret });
-      else if (event.type === "canvas") ops.push(traceFromOp(event.op));
+      if (event.type === "tool") {
+        ops.push({ verb: event.verb, arg: event.arg, ret: event.ret });
+        items.push({ kind: "tool", verb: event.verb, arg: event.arg, ret: event.ret });
+      } else if (event.type === "canvas") {
+        const line = traceFromOp(event.op);
+        ops.push(line);
+        items.push({ kind: "tool", ...line });
+      } else if (event.type === "chat_delta") {
+        upsertPart(event.partId, event.kind, event.text);
+      }
       res.write(`data: ${JSON.stringify(event)}\n\n`);
     };
     const unsubscribe = runtime.subscribe(id, send);
@@ -248,9 +272,25 @@ export async function createMuServer(opts: MuServerOptions): Promise<MuServerHan
       runtime.sessions.persist(id);
       // inject_canvas_state: the cheap summary rides along as an extra prompt part.
       const summary = runtime.canvasSummary(id);
-      const reply = await activeDriver.prompt(id, text, [`\n\n[µ canvas state] ${JSON.stringify(summary)}`]);
+      // Stream prose/reasoning tokens live: the driver's onDelta re-publishes each
+      // cumulative part on the bus, which `send` both writes to the SSE client and
+      // folds into the interleaved `items` timeline (single accumulation point).
+      const reply = await activeDriver.prompt(
+        id,
+        text,
+        [`\n\n[µ canvas state] ${JSON.stringify(summary)}`],
+        (d) => runtime.publish(id, { type: "chat_delta", partId: d.partId, kind: d.kind, text: d.text }),
+      );
       if (aborted) return; // client gone — don't record/publish a turn nobody is listening to
-      runtime.sessions.require(id).messages.push({ role: "assistant", text: reply, at: Date.now(), ops: [...ops] });
+      // Persist `items` (the interleaved timeline) alongside `text`+`ops`. text/ops are
+      // kept as the fallback for legacy renderers and for any turn that produced no items.
+      runtime.sessions.require(id).messages.push({
+        role: "assistant",
+        text: reply,
+        at: Date.now(),
+        ops: [...ops],
+        ...(items.length ? { items: [...items] } : {}),
+      });
       runtime.sessions.persist(id);
       runtime.publish(id, { type: "chat", role: "assistant", text: reply });
       runtime.publish(id, { type: "done" });

@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
-import { traceFromOp, type CanvasOp, type CanvasState, type ChatMessage } from "@mu/protocol";
+import type { CanvasOp, CanvasState, ChatMessage, TurnItem } from "@mu/protocol";
+import { applyTimelineEvent, emptyTimeline } from "../lib/turn-timeline";
 import { handlesToResolve, reconcile } from "../lib/manifest";
 import { presetForSize } from "../lib/grid";
 import type { DataMap } from "../lib/types";
@@ -18,14 +19,21 @@ interface SessionView {
   manifest: CanvasState | null;
   chat: ChatTurn[];
   thinking: boolean;
-  /** the ops-trace accumulating during the current turn (shown live, then attached). */
-  pending: TraceLine[];
+  /** the interleaved timeline (prose/reasoning/tool) accumulating during the current
+   *  turn — shown live, then committed onto the assistant turn (live≡reload). */
+  pending: TurnItem[];
 }
 const emptyView = (): SessionView => ({ manifest: null, chat: [], thinking: false, pending: [] });
 
-/** Server chat history → view turns. The ops-trace is now persisted server-side,
- *  so restored assistant turns carry it too (traceFromOp is the shared builder). */
-const toTurn = (m: ChatMessage): ChatTurn => ({ role: m.role, text: m.text, ops: m.ops ? [...m.ops] : undefined });
+/** Server chat history → view turns. Both the interleaved timeline (`items`) and the
+ *  ops-trace are persisted server-side, so a restored assistant turn renders exactly
+ *  as it streamed (live≡reload); `text`/`ops` remain the fallback for legacy turns. */
+const toTurn = (m: ChatMessage): ChatTurn => ({
+  role: m.role,
+  text: m.text,
+  ops: m.ops ? [...m.ops] : undefined,
+  items: m.items ? [...m.items] : undefined,
+});
 
 function RefreshButton({ spinning, disabled, onClick }: { spinning: boolean; disabled: boolean; onClick: () => void }): JSX.Element {
   return (
@@ -75,6 +83,9 @@ export function App(): JSX.Element {
   const prevManifest = useRef<Record<string, CanvasState | null>>({});
   const booted = useRef(false);
   const composerRef = useRef<HTMLTextAreaElement>(null);
+  // Per-session in-flight AbortController, so the stop button can cancel the active
+  // turn's SSE stream (the backend then aborts the agent via res.on("close")).
+  const aborters = useRef<Record<string, AbortController>>({});
   // current active session, readable inside long-running async turns (for unread).
   const activeIdRef = useRef(activeId);
   useEffect(() => {
@@ -192,26 +203,49 @@ export function App(): JSX.Element {
       const id = activeId;
       if (!id || (views[id] ?? emptyView()).thinking) return;
       setView(id, (v) => ({ ...v, chat: [...v.chat, { role: "user", text }], thinking: true, pending: [] }));
-      const trace: TraceLine[] = [];
-      const pushTrace = (line: TraceLine): void => {
-        trace.push(line);
-        setView(id, (v) => ({ ...v, pending: [...trace] })); // stream the ops-trace live
+      // Build the live interleaved timeline with the SAME pure folder the server
+      // persists, so the in-flight render and the committed/restored turn match
+      // exactly (live≡reload). `ops` is derived from it for the legacy fallback.
+      const tl = emptyTimeline();
+      const opsOf = (): TraceLine[] => tl.items.filter((it): it is Extract<TurnItem, { kind: "tool" }> => it.kind === "tool");
+      const controller = new AbortController();
+      aborters.current[id] = controller;
+      let committed = false; // a terminal chat/error already wrote the assistant turn
+      const commit = (turn: ChatTurn): void => {
+        committed = true;
+        setView(id, (v) => ({ ...v, chat: [...v.chat, turn] }));
       };
       try {
-        await streamMessage(id, text, (e) => {
-          if (e.type === "tool") pushTrace({ verb: e.verb, arg: e.arg, ret: e.ret });
-          else if (e.type === "canvas") {
-            pushTrace(traceFromOp(e.op));
-            applyManifest(id, e.state);
-          } else if (e.type === "chat" && e.role === "assistant") {
-            setView(id, (v) => ({ ...v, chat: [...v.chat, { role: "assistant", text: e.text, ops: [...trace] }] }));
-          } else if (e.type === "error") {
-            setView(id, (v) => ({ ...v, chat: [...v.chat, { role: "assistant", text: "", error: `${e.error.code ?? "ERROR"}: ${e.error.message}`, ops: [...trace] }] }));
-          }
-        });
+        await streamMessage(
+          id,
+          text,
+          (e) => {
+            // Fold every event into the timeline first (text/reasoning upsert by partId,
+            // tool/canvas append in order), then re-render the in-flight turn from it.
+            applyTimelineEvent(tl, e);
+            if (e.type === "canvas") applyManifest(id, e.state);
+            if (e.type === "chat" && e.role === "assistant") {
+              // Terminal text is authoritative; keep the streamed items as the render
+              // source and carry text/ops as the legacy fallback.
+              commit({ role: "assistant", text: e.text, items: [...tl.items], ops: opsOf() });
+            } else if (e.type === "error") {
+              commit({ role: "assistant", text: "", error: `${e.error.code ?? "ERROR"}: ${e.error.message}`, items: [...tl.items], ops: opsOf() });
+            } else {
+              setView(id, (v) => ({ ...v, pending: [...tl.items] }));
+            }
+          },
+          controller.signal,
+        );
       } catch (err) {
-        setView(id, (v) => ({ ...v, chat: [...v.chat, { role: "assistant", text: "", error: err instanceof Error ? err.message : String(err) }] }));
+        // Abort is expected (the stop button) — keep the partial turn, labeled
+        // "stopped". Any other error commits an error turn (unless one already landed).
+        if (controller.signal.aborted) {
+          if (!committed) commit({ role: "assistant", text: "", items: [...tl.items], ops: opsOf(), error: "stopped" });
+        } else if (!committed) {
+          commit({ role: "assistant", text: "", error: err instanceof Error ? err.message : String(err), items: tl.items.length ? [...tl.items] : undefined, ops: opsOf() });
+        }
       } finally {
+        delete aborters.current[id];
         setView(id, (v) => ({ ...v, thinking: false, pending: [] }));
         // the reply landed somewhere the user isn't looking → mark it unread.
         if (id !== activeIdRef.current) {
@@ -222,6 +256,12 @@ export function App(): JSX.Element {
     },
     [activeId, views, setView, applyManifest, syncTitle],
   );
+
+  // Cancel the active session's in-flight turn. Aborting the fetch fires the SSE
+  // stream's `close` on the server, which aborts the agent; the partial turn is kept.
+  const onStop = useCallback((): void => {
+    aborters.current[activeId]?.abort();
+  }, [activeId]);
 
   // --- manual refresh (global) --------------------------------------------
   // Re-acquire every data-backed handle in the active session from its source,
@@ -412,10 +452,11 @@ export function App(): JSX.Element {
         name={activeMeta?.name ?? "session"}
         chat={active.chat}
         thinking={active.thinking}
-        pendingOps={active.pending}
+        pendingItems={active.pending}
         width={t.chatWidth}
         inputRef={composerRef}
         onSend={onSend}
+        onStop={onStop}
       />
     </div>
   );

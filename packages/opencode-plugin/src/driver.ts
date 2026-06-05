@@ -170,20 +170,98 @@ export class OpencodeDriver {
    * Send a user message (command). `extraParts` carries the appended canvas summary
    * (inject_canvas_state). Returns the assistant's text for the WHOLE turn; canvas
    * ops the agent emits flow through the tool callback, not this return value (CQRS).
+   *
+   * `onDelta`, when given, fires for every prose/reasoning token the agent streams
+   * (cumulative `text` per `partId`) so the server can relay live deltas. The final
+   * return value (from `collectTurnText`) stays authoritative — deltas are a UX
+   * nicety, not the source of truth, so a dropped frame never loses text.
    */
-  async prompt(sessionId: string, text: string, extraParts: string[] = []): Promise<string> {
+  async prompt(
+    sessionId: string,
+    text: string,
+    extraParts: string[] = [],
+    onDelta?: (d: { partId: string; kind: "text" | "reasoning"; text: string }) => void,
+  ): Promise<string> {
     const parts = [text, ...extraParts].map((t) => ({ type: "text" as const, text: t }));
-    const call = this.client.session.prompt({
-      path: { id: sessionId },
-      body: { parts, model: parseModel(this.model) },
-    });
-    const result = this.timeoutMs > 0 ? await withTimeout(call, this.timeoutMs) : await call;
-    // `prompt` returns only the FINAL assistant message, but opencode emits a
-    // separate message per step — text the agent wrote *before* a tool call lives
-    // in an earlier message. Collect every assistant message in the turn so none of
-    // it is dropped (the "later block overwrites the earlier" bug). Fall back to the
-    // returned message if the listing is unavailable.
-    return (await this.collectTurnText(sessionId)) || extractAssistantText(result);
+    // Stream tokens by tailing the opencode event bus for the duration of the turn.
+    // Only started when a consumer wants deltas; otherwise the old request/poll path
+    // is unchanged. The subscription is torn down in `finally` so it never outlives
+    // the turn (timeout or abort included).
+    const stream = onDelta ? this.streamDeltas(sessionId, onDelta) : undefined;
+    try {
+      const call = this.client.session.prompt({
+        path: { id: sessionId },
+        body: { parts, model: parseModel(this.model) },
+      });
+      const result = this.timeoutMs > 0 ? await withTimeout(call, this.timeoutMs) : await call;
+      // `prompt` returns only the FINAL assistant message, but opencode emits a
+      // separate message per step — text the agent wrote *before* a tool call lives
+      // in an earlier message. Collect every assistant message in the turn so none of
+      // it is dropped (the "later block overwrites the earlier" bug). Fall back to the
+      // returned message if the listing is unavailable.
+      return (await this.collectTurnText(sessionId)) || extractAssistantText(result);
+    } finally {
+      stream?.stop();
+    }
+  }
+
+  /**
+   * Tail the opencode event stream for one turn, forwarding cumulative text/reasoning
+   * part updates to `onDelta`. The `/event` stream is GLOBAL (every session), so we
+   * MUST filter by `sessionID` — and we MUST exclude the user message we just sent,
+   * since its part is also a `text` part. We track message roles from `message.updated`
+   * events (keyed by messageID) and only forward parts whose owning message is known
+   * to be an assistant message. Returns a `stop()` that ends the generator (closing the
+   * HTTP stream) so the subscription can't leak past the turn.
+   */
+  private streamDeltas(
+    sessionId: string,
+    onDelta: (d: { partId: string; kind: "text" | "reasoning"; text: string }) => void,
+  ): { stop(): void } {
+    let generator: AsyncGenerator<unknown> | undefined;
+    let stopped = false;
+    // messageID → role, learned from `message.updated`. A part is forwarded only once
+    // its message is confirmed assistant; parts of the just-sent user message stay out.
+    const role = new Map<string, string>();
+    void (async () => {
+      try {
+        const sub = await this.client.event.subscribe();
+        if (stopped) return; // stop() raced ahead of subscribe resolving
+        generator = sub.stream as AsyncGenerator<unknown>;
+        for await (const raw of generator) {
+          // The stream yields the `Event` union; code defensively against `unknown`.
+          const ev = raw as { type?: string; properties?: Record<string, unknown> };
+          if (ev.type === "message.updated") {
+            const info = ev.properties?.["info"] as { id?: string; sessionID?: string; role?: string } | undefined;
+            if (info?.sessionID === sessionId && typeof info.id === "string" && typeof info.role === "string") {
+              role.set(info.id, info.role);
+            }
+            continue;
+          }
+          if (ev.type !== "message.part.updated") continue;
+          const part = ev.properties?.["part"] as
+            | { id?: string; sessionID?: string; messageID?: string; type?: string; text?: string }
+            | undefined;
+          if (!part || part.sessionID !== sessionId) continue; // global stream → filter is mandatory
+          if (part.type !== "text" && part.type !== "reasoning") continue;
+          if (typeof part.id !== "string" || typeof part.text !== "string") continue;
+          // Only forward assistant prose, never the user message we just sent. If the
+          // role isn't known yet, skip (it'll arrive cumulatively on a later frame).
+          if (role.get(String(part.messageID)) !== "assistant") continue;
+          onDelta({ partId: part.id, kind: part.type, text: part.text });
+        }
+      } catch {
+        // A torn-down stream (stop → generator.return) or a transient subscribe error
+        // must never fail the turn; deltas are best-effort over the authoritative text.
+      }
+    })();
+    return {
+      stop: () => {
+        stopped = true;
+        // End the async generator → closes the underlying SSE connection. Best-effort.
+        void generator?.return(undefined).catch(() => undefined);
+      },
+    };
   }
 
   /** Concatenate every assistant message produced after the last user message. */

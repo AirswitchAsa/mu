@@ -36,5 +36,5 @@ export type {
   IndicatorValidation,
 } from "./indicators.js";
 export { INDICATORS, INDICATOR_BY_NAME, validateIndicators, resolveIndicatorParams } from "./indicators.js";
-export type { SessionState, CanvasState, ChatMessage, ProvenanceEntry } from "./session.js";
+export type { SessionState, CanvasState, ChatMessage, TurnItem, ProvenanceEntry } from "./session.js";
 export type { CanvasSummary, CanvasSummaryWindow } from "./canvas-summary.js";

@@ -3,6 +3,19 @@ import type { Handle } from "./handle.js";
 import type { Provenance } from "./provenance.js";
 import type { Placement, Window } from "./window.js";
 
+/**
+ * One entry in an assistant turn's INTERLEAVED timeline (conversation-experience).
+ * Prose, reasoning, and tool activity are recorded in receipt order so a restored
+ * turn renders identically to the live stream (live≡reload): text the agent wrote
+ * before a tool call stays *before* that tool's row, not lumped at the end.
+ * `text`/`reasoning` items are keyed by `id` (the opencode part id) and upserted —
+ * their `text` is the cumulative content of that part. A `tool` item is one
+ * ops-trace line (a canvas op or a data verb), appended where it occurred.
+ */
+export type TurnItem =
+  | { readonly kind: "text" | "reasoning"; readonly id: string; readonly text: string }
+  | { readonly kind: "tool"; readonly verb: string; readonly arg: string; readonly ret: string };
+
 export interface ChatMessage {
   readonly role: "user" | "assistant";
   readonly text: string;
@@ -10,6 +23,10 @@ export interface ChatMessage {
   /** The ops-trace for an assistant turn (canvas + data verbs), so it survives a
    *  reload. Absent on user messages and on turns that ran no tools. */
   readonly ops?: readonly TraceLine[];
+  /** The interleaved timeline (prose/reasoning/tool in order) for an assistant
+   *  turn. Present on turns recorded since token-streaming landed; absent on
+   *  legacy/restored-pre-this-change messages, which fall back to `text`+`ops`. */
+  readonly items?: readonly TurnItem[];
 }
 
 /** One entry in the provenance trail: a window's binding back to a handle + stamp. */

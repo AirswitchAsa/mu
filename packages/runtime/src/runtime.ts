@@ -26,6 +26,11 @@ export type MuEvent =
   | { type: "canvas"; op: CanvasOp; state: CanvasState }
   // A data verb the agent ran this turn — surfaced for the ops-trace, never bulk.
   | { type: "tool"; verb: string; arg: string; ret: string }
+  // A token-streaming delta for one assistant message part (prose or reasoning).
+  // `text` is CUMULATIVE per `partId`: each delta carries the FULL part text so
+  // far, so the client upserts by `partId` rather than concatenating. The terminal
+  // `chat` event still carries the authoritative final text (covers missed frames).
+  | { type: "chat_delta"; partId: string; kind: "text" | "reasoning"; text: string }
   | { type: "chat"; role: "assistant" | "user"; text: string }
   | { type: "done" }
   | { type: "error"; error: { code?: string; message: string } };
