@@ -4,16 +4,16 @@ import type { Provenance } from "./provenance.js";
 import type { Placement, Window } from "./window.js";
 
 /**
- * One item in an assistant turn's interleaved timeline — prose, reasoning, and tool
- * calls in the order they happened. Built client-side from the stream (`chat_delta`
- * text/reasoning parts keyed by `id`, interleaved with `tool`/`canvas` events in
- * receipt order) and persisted on {@link ChatMessage.items} so a *restored* turn
- * renders identically to the live one (same live≡reload discipline as `ops`). A
- * `tool` item mirrors a {@link TraceLine}.
+ * One entry in an assistant turn's INTERLEAVED timeline (conversation-experience).
+ * Prose, reasoning, and tool activity are recorded in receipt order so a restored
+ * turn renders identically to the live stream (live≡reload): text the agent wrote
+ * before a tool call stays *before* that tool's row, not lumped at the end.
+ * `text`/`reasoning` items are keyed by `id` (the opencode part id) and upserted —
+ * their `text` is the cumulative content of that part. A `tool` item is one
+ * ops-trace line (a canvas op or a data verb), appended where it occurred.
  */
 export type TurnItem =
-  | { readonly kind: "text"; readonly id: string; readonly text: string }
-  | { readonly kind: "reasoning"; readonly id: string; readonly text: string }
+  | { readonly kind: "text" | "reasoning"; readonly id: string; readonly text: string }
   | { readonly kind: "tool"; readonly verb: string; readonly arg: string; readonly ret: string };
 
 export interface ChatMessage {
@@ -23,9 +23,9 @@ export interface ChatMessage {
   /** The ops-trace for an assistant turn (canvas + data verbs), so it survives a
    *  reload. Absent on user messages and on turns that ran no tools. */
   readonly ops?: readonly TraceLine[];
-  /** The full interleaved turn timeline (prose ↔ tool calls in order). Present on
-   *  streamed/restored assistant turns; `text`+`ops` remain the flat fallback for
-   *  legacy messages and any client that doesn't render the timeline. */
+  /** The interleaved timeline (prose/reasoning/tool in order) for an assistant
+   *  turn. Present on turns recorded since token-streaming landed; absent on
+   *  legacy/restored-pre-this-change messages, which fall back to `text`+`ops`. */
   readonly items?: readonly TurnItem[];
 }
 

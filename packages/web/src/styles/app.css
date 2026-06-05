@@ -466,6 +466,22 @@ body.mu-is-dragging { cursor: grabbing; user-select: none; }
 .mu-ops__arg { color: var(--ink-soft); min-width: 0; overflow-wrap: anywhere; }
 .mu-ops__ret { grid-column: 2; color: var(--muted); min-width: 0; overflow-wrap: anywhere; }
 
+/* ---- reasoning: shown but collapsed by default (native <details>). --------- */
+.mu-reasoning { font-size: 12.5px; }
+.mu-reasoning__summary {
+  cursor: pointer; color: var(--muted); list-style: none;
+  font-family: var(--ds-font-mono); font-size: 11px; letter-spacing: 0.02em;
+  user-select: none; width: max-content;
+}
+.mu-reasoning__summary::-webkit-details-marker { display: none; }
+.mu-reasoning__summary::before { content: "› "; color: var(--action); }
+.mu-reasoning[open] > .mu-reasoning__summary::before { content: "⌄ "; }
+.mu-reasoning__summary:hover { color: var(--ink-soft); }
+.mu-reasoning__body {
+  margin-top: 6px; padding-left: 10px; border-left: 1px solid var(--line);
+  color: var(--ink-soft);
+}
+
 /* ---- composer --------------------------------------------------------- */
 .mu-composer { flex: 0 0 auto; padding: 12px 18px 18px; display: flex; flex-direction: column; gap: 10px; }
 .mu-suggest {
@@ -500,6 +516,9 @@ body.mu-is-dragging { cursor: grabbing; user-select: none; }
 }
 .mu-composer__send:hover { background: color-mix(in srgb, var(--action), var(--paper) 18%); }
 .mu-composer__send:disabled { opacity: 0.4; cursor: not-allowed; }
+/* stop button (shown while a turn streams): a quieter, danger-tinted variant. */
+.mu-composer__stop { border-color: var(--danger); background: var(--danger); color: var(--paper); }
+.mu-composer__stop:hover { background: color-mix(in srgb, var(--danger), var(--paper) 18%); }
 
 /* ---- scrollbars: thin, on-brand, HIDDEN at rest, fading in softly. ---------
    The track is always transparent and the thumb is transparent at rest (so an

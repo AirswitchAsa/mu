@@ -83,6 +83,9 @@ export interface HistDatum {
 export type MuStreamEvent =
   | { type: "canvas"; op: CanvasOp; state: CanvasState }
   | { type: "tool"; verb: string; arg: string; ret: string }
+  // Cumulative token-stream delta for one assistant part (prose or reasoning).
+  // `text` is the FULL part text so far → upsert by `partId`, don't concatenate.
+  | { type: "chat_delta"; partId: string; kind: "text" | "reasoning"; text: string }
   | { type: "chat"; role: "assistant" | "user"; text: string }
   | { type: "done" }
   | { type: "error"; error: { code?: string; message: string } };
