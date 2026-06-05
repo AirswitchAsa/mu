@@ -30,6 +30,7 @@ describe("finnhub resource", () => {
     ];
     const r = createFinnhubResource({ fetchJson: async () => raw, apiKey: "k" });
     const out = await r.fetch({ shape: "news", entity: "AMZN" }, ctx);
+    expect(out.descriptor.identity.tail).toEqual(["ticker"]); // company-news is per-ticker
     expect(out.payload).toHaveLength(1);
     expect(out.payload[0]).toMatchObject({
       id: "7",

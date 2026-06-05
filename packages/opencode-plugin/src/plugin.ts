@@ -71,6 +71,7 @@ export const server: Plugin = async () => ({
         source: z.string().optional().describe("provider id (default yfinance)"),
         resolution: z.string().optional().describe("1d (default) | 1wk | 1mo"),
         range: z.string().optional().describe("5d|1mo|3mo|6mo|1y|2y|5y|max"),
+        kind: z.string().optional().describe("news namespace: ticker (per-company) | sector | market (defaulted from the source/feed when omitted)"),
       },
       execute: (args, ctx) =>
         run("data_fetch", ctx.sessionID, args, (ok) => {

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { fmtValue, latestSnapshot, latestVintages, mergeNews, newsKey, nextRelease, releaseTrails, splitTickers, vintageKey } from "./cards";
+import { fmtValue, latestSnapshot, latestVintages, mergeKey, mergeNews, newsKey, nextRelease, normalizeUrl, releaseTrails, splitTickers, vintageKey } from "./cards";
 import type { KeyStatsRow, NewsRow, ReleaseRow } from "./types";
 
 const stat = (field: string, asOf: number, group: string, value = "x"): KeyStatsRow => ({
@@ -10,7 +10,13 @@ const stat = (field: string, asOf: number, group: string, value = "x"): KeyStats
   group,
 });
 
-const news = (id: string, source: string, t: number): NewsRow => ({ id, source, published_at: t, headline: `${source}:${id}` });
+const news = (id: string, source: string, t: number, extra: Partial<NewsRow> = {}): NewsRow => ({
+  id,
+  source,
+  published_at: t,
+  headline: `${source}:${id}`,
+  ...extra,
+});
 const rel = (event: string, ref: string, asOf: number, releaseTime: number, extra: Partial<ReleaseRow> = {}): ReleaseRow => ({
   event,
   name: event,
@@ -29,6 +35,28 @@ describe("splitTickers", () => {
   });
 });
 
+describe("normalizeUrl", () => {
+  it("lowercases host, drops scheme, strips query + fragment + trailing slash", () => {
+    expect(normalizeUrl("https://Example.com/Story/?utm_source=cnbc&x=1#top")).toBe("example.com/Story");
+    expect(normalizeUrl("http://example.com/a/b/")).toBe("example.com/a/b");
+    expect(normalizeUrl("https://example.com/")).toBe("example.com");
+  });
+
+  it("collapses tracking-only variants of the same link to one key", () => {
+    const a = normalizeUrl("https://reuters.com/markets/aws?utm_medium=social");
+    const b = normalizeUrl("http://reuters.com/markets/aws#ref");
+    expect(a).toBe(b);
+  });
+
+  it("path case is preserved (paths are case-sensitive) but host case is not", () => {
+    expect(normalizeUrl("https://NEWS.Site.com/AB")).toBe("news.site.com/AB");
+  });
+
+  it("lightly normalizes a non-parseable string instead of throwing", () => {
+    expect(normalizeUrl("Example.com/x/?a=1#f")).toBe("example.com/x");
+  });
+});
+
 describe("mergeNews", () => {
   it("interleaves handles reverse-chronologically", () => {
     const a = [news("1", "yahoo", 30), news("2", "yahoo", 10)];
@@ -36,17 +64,51 @@ describe("mergeNews", () => {
     expect(mergeNews([a, b]).map((r) => r.id)).toEqual(["1", "9", "2"]);
   });
 
-  it("keeps each source's copy (no cross-source dedup) but de-dups within a source", () => {
-    const a = [news("1", "yahoo", 30), news("1", "yahoo", 30)]; // dup id+source
-    const b = [news("1", "cnbc", 30)]; // same id, different source → kept
+  it("collapses the SAME story across sources (normalized url) into one row", () => {
+    const a = [news("1", "yahoo", 30, { url: "https://wire.com/story?utm_source=y" })];
+    const b = [news("9", "cnbc", 30, { url: "http://wire.com/story#frag" })]; // same normalized url
+    const out = mergeNews([a, b]);
+    expect(out).toHaveLength(1);
+  });
+
+  it("keeps the richest-metadata copy on a cross-source collision (image, then summary)", () => {
+    const plain = news("1", "yahoo", 30, { url: "https://wire.com/s" });
+    const rich = news("9", "cnbc", 30, { url: "https://wire.com/s", image_url: "img", summary: "long" });
+    expect(mergeNews([[plain], [rich]])[0]!.source).toBe("cnbc"); // rich wins regardless of order
+    expect(mergeNews([[rich], [plain]])[0]!.source).toBe("cnbc");
+  });
+
+  it("ties-breaks by longer summary when neither has an image, else keeps earliest-seen", () => {
+    const short = news("1", "yahoo", 30, { url: "https://wire.com/s", summary: "hi" });
+    const long = news("9", "cnbc", 30, { url: "https://wire.com/s", summary: "much longer summary" });
+    expect(mergeNews([[short], [long]])[0]!.source).toBe("cnbc"); // longer summary wins
+    // equal richness → earliest-seen stays
+    const e1 = news("1", "yahoo", 30, { url: "https://wire.com/s" });
+    const e2 = news("9", "cnbc", 30, { url: "https://wire.com/s" });
+    expect(mergeNews([[e1], [e2]])[0]!.source).toBe("yahoo");
+  });
+
+  it("never merges url-less items: they fall back to within-source (source, id) identity", () => {
+    const a = [news("1", "yahoo", 30)]; // no url
+    const b = [news("1", "cnbc", 30)]; // same id, different source, no url → both kept
     const out = mergeNews([a, b]);
     expect(out).toHaveLength(2);
     expect(out.map((r) => r.source).sort()).toEqual(["cnbc", "yahoo"]);
   });
 
-  it("newsKey is (source, id): the dedup key the React list key must reuse", () => {
-    expect(newsKey({ source: "yahoo", id: "7" })).toBe(newsKey({ source: "yahoo", id: "7" }));
-    expect(newsKey({ source: "yahoo", id: "7" })).not.toBe(newsKey({ source: "cnbc", id: "7" }));
+  it("still de-dups exact within-source duplicates", () => {
+    const a = [news("1", "yahoo", 30), news("1", "yahoo", 30)]; // dup id+source, no url
+    expect(mergeNews([a, []])).toHaveLength(1);
+  });
+
+  it("mergeKey is the single dedup + React-list identity (url when present, else source/id)", () => {
+    // same normalized url → same key across sources
+    const x = news("1", "yahoo", 30, { url: "https://wire.com/s?utm=1" });
+    const y = news("9", "cnbc", 30, { url: "http://wire.com/s#a" });
+    expect(mergeKey(x)).toBe(mergeKey(y));
+    // url-less rows fall back to newsKey, distinct per source
+    expect(mergeKey(news("7", "yahoo", 1))).toBe(`id:${newsKey({ source: "yahoo", id: "7" })}`);
+    expect(mergeKey(news("7", "yahoo", 1))).not.toBe(mergeKey(news("7", "cnbc", 1)));
   });
 });
 

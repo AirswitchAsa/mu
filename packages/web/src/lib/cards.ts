@@ -15,32 +15,80 @@ export function splitTickers(tickers: string | undefined): string[] {
 }
 
 /**
- * The identity of a news item within the wire — `(source, id)`. The single source of
- * truth for both dedup (mergeNews) and the News card's React list key, so the two
- * notions of identity can't drift.
+ * The within-source identity of a news item — `(source, id)`. Used as the fallback
+ * dedup/list key for items that carry NO url (so a missing url never collapses to
+ * empty), and as the React list key when a row wasn't matched by url. See
+ * {@link mergeKey} for the single source of truth the card must reuse.
  */
 export function newsKey(r: { source: string; id: string }): string {
   return `${r.source} ${r.id}`;
 }
 
 /**
+ * Normalize a url to a cross-source story key: lowercase host, drop the scheme, strip
+ * ALL query params (UTM/tracking and otherwise — they don't identify the article) and
+ * the fragment, and drop a trailing slash. Two outlets syndicating the same canonical
+ * link therefore collapse to one key. A non-parseable string is lightly normalized
+ * (trimmed, lowercased, scheme/fragment/query/trailing-slash stripped) so it still
+ * dedups deterministically rather than throwing.
+ */
+export function normalizeUrl(url: string): string {
+  const stripScheme = (s: string): string => s.replace(/^[a-z][a-z0-9+.-]*:\/\//i, "");
+  try {
+    const u = new URL(url);
+    const host = u.host.toLowerCase();
+    const path = u.pathname.replace(/\/+$/, ""); // drop trailing slash(es)
+    return `${host}${path}`; // scheme, search (query), and hash all dropped
+  } catch {
+    let s = url.trim().toLowerCase();
+    s = stripScheme(s);
+    s = s.split("#")[0]!.split("?")[0]!; // drop fragment then query
+    return s.replace(/\/+$/, "");
+  }
+}
+
+/**
+ * The dedup + React-list identity of a merged news row — the single source of truth
+ * so {@link mergeNews} and the News card can't drift (the discipline `newsKey` used
+ * to hold alone). A row WITH a url keys by its normalized url (so the same story across
+ * sources is one row); a row WITHOUT a url falls back to its within-source `newsKey`.
+ */
+export function mergeKey(r: NewsRow): string {
+  return r.url ? `url:${normalizeUrl(r.url)}` : `id:${newsKey(r)}`;
+}
+
+/** True when `cand` carries richer display metadata than `cur` (image, then summary). */
+function richerThan(cand: NewsRow, cur: NewsRow): boolean {
+  const candImg = Boolean(cand.image_url);
+  const curImg = Boolean(cur.image_url);
+  if (candImg !== curImg) return candImg; // prefer a copy that has an image
+  return (cand.summary?.length ?? 0) > (cur.summary?.length ?? 0); // then a longer summary
+}
+
+/**
  * Interleave the rows of several bound `news` handles into one reverse-chronological
- * wire. No cross-source dedup (each source's copy shows, labeled) — only a guard
- * against the same id appearing twice within a single resolve.
+ * wire, COLLAPSING the same story carried by different sources into a single row.
+ * Identity is {@link mergeKey}: a normalized url when present (so cross-source
+ * syndications dedup), else the within-source `newsKey` (a url-less item is never
+ * merged into another). On a collision we KEEP THE RICHEST-METADATA copy — one with an
+ * `image_url`, tie-broken by the longer `summary`, then the earliest-seen (stable).
+ * This reverses the prior "show each labeled source" contract.
+ *
+ * Normalization lives client-side (presentation-first, no schema churn); a server-side
+ * merge on a stored `normalized_url` is a possible future optimization.
  */
 export function mergeNews(perHandle: readonly NewsRow[][]): NewsRow[] {
-  const seen = new Set<string>();
-  const out: NewsRow[] = [];
+  const byKey = new Map<string, NewsRow>();
   for (const rows of perHandle) {
     for (const r of rows) {
-      const k = newsKey(r);
-      if (seen.has(k)) continue;
-      seen.add(k);
-      out.push(r);
+      const k = mergeKey(r);
+      const cur = byKey.get(k);
+      if (!cur) byKey.set(k, r);
+      else if (richerThan(r, cur)) byKey.set(k, r); // upgrade to the richer copy
+      // else keep the earliest-seen (stable tie-break)
     }
   }
-  out.sort((a, b) => b.published_at - a.published_at);
-  return out;
+  return [...byKey.values()].sort((a, b) => b.published_at - a.published_at);
 }
 
 /** The logical identity of a release — `(event, reference_period)`; vintages share it. */

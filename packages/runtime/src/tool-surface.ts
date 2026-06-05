@@ -82,6 +82,7 @@ export class ToolSurface {
     range?: string;
     start?: number;
     end?: number;
+    kind?: string;
   }): Promise<{ handle: Handle; summary: unknown }> {
     if (!args.entity) throw new MuErrorException("FETCH_FAILED", "data_fetch requires an 'entity'");
     return this.deps.coordinator.acquire(args.source, {
@@ -91,6 +92,8 @@ export class ToolSurface {
       range: args.range,
       start: args.start,
       end: args.end,
+      // News namespace (ticker | sector | market); resource-defaulted when omitted.
+      kind: args.kind,
     });
   }
 

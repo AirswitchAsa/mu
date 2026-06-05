@@ -18,6 +18,13 @@ export interface FetchParams {
   readonly range?: string;
   readonly start?: number;
   readonly end?: number;
+  /**
+   * News-shape namespace (`ticker` | `sector` | `market`), carried into the handle
+   * tail so the wire's scope is part of its identity. Optional and resource-defaulted
+   * (a per-ticker company feed → `ticker`, a general wire → `market`), so omitting it
+   * never breaks resolution. Ignored by non-news shapes.
+   */
+  readonly kind?: string;
   readonly [k: string]: unknown;
 }
 

@@ -1,12 +1,16 @@
-import { newsKey, splitTickers } from "../../lib/cards";
+import { mergeKey, splitTickers } from "../../lib/cards";
 import { agoLabel } from "../../lib/timefmt";
 import type { NewsRow } from "../../lib/types";
 
 // =============================================================================
 // µ — news wire card. A reverse-chronological headline feed over one or more bound
-// `news` handles (interleaved by the parent): source · time · tickers, headline,
-// optional summary. Each item is labeled with its source — aggregate freely, no
-// cross-source dedup. Reads resolved rows (no baked data).
+// `news` handles (interleaved + cross-source deduped by the parent via mergeNews):
+// source · time · tickers, headline, optional summary. The same story syndicated by
+// several sources shows once (richest copy). Reads resolved rows (no baked data).
+//
+// FUTURE: rows carry no handle, so the namespace (handle tail[0]: ticker|sector|market)
+// isn't available here to group/badge by. Badging would mean threading each binding's
+// decoded tail down from GridCard onto its rows — deferred (not a cheap change).
 // =============================================================================
 
 function NewsRowView({ item, now }: { item: NewsRow; now: number }): JSX.Element {
@@ -55,7 +59,7 @@ export function NewsCard({ items, now }: { items: NewsRow[]; now: number }): JSX
         {items.length === 0 ? (
           <div className="mu-news__more ds-spec">no headlines yet — bind a news feed and refresh</div>
         ) : (
-          items.map((it) => <NewsRowView key={newsKey(it)} item={it} now={now} />)
+          items.map((it) => <NewsRowView key={mergeKey(it)} item={it} now={now} />)
         )}
       </div>
     </div>
