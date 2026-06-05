@@ -107,6 +107,16 @@ describe("µ server HTTP API (deterministic, no model)", () => {
     expect(hist2.messages.some((m) => m.text === "ghost")).toBe(false);
   });
 
+  it("mints a µ id decoupled from opencode (API-only: uuid, no opencodeSessionId)", async () => {
+    // Workstream 3: µ owns its identity. With no driver the µ id is a fresh uuid
+    // (never an opencode-minted id) and opencodeSessionId stays undefined, so
+    // resolveOpencodeId falls back to the µ id for the legacy 1:1 model.
+    const { sessionId } = (await json(`${server.url}/api/sessions`, { method: "POST" })) as { sessionId: string };
+    expect(sessionId).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/);
+    expect(server.runtime.sessions.require(sessionId).opencodeSessionId).toBeUndefined();
+    expect(server.runtime.resolveOpencodeId(sessionId)).toBe(sessionId);
+  });
+
   it("serves chat history for a session (empty until messages flow), 404 for unknown", async () => {
     const { sessionId } = (await json(`${server.url}/api/sessions`, { method: "POST" })) as { sessionId: string };
     const hist = (await json(`${server.url}/api/sessions/${sessionId}/messages`)) as { messages: unknown[] };

@@ -46,10 +46,14 @@ export interface ProvenanceEntry {
  */
 export interface SessionState {
   readonly id: string;
-  /** The opencode session this µ session currently drives. Decoupled from `id` so
-   *  µ keeps a stable identity (and its persisted canvas/transcript) even when the
-   *  opencode session is gone after a restart and has to be re-minted (WS3). When
-   *  absent, the legacy 1:1 mapping (`opencodeSessionId === id`) is assumed. */
+  /**
+   * The opencode session this µ session is currently bound to (its disposable
+   * executor). Decoupled from `id`: µ owns its identity; opencode is re-mintable.
+   * When ABSENT, assume the legacy 1:1 model where `opencodeSessionId === id`
+   * (rehydrated pre-decouple sidecars, or API-only sessions that never had a
+   * driver). Reconcile-on-miss rewrites this field when a fresh opencode session
+   * is minted for an existing µ session.
+   */
   opencodeSessionId?: string;
   windows: Window[];
   /** windowId → placement; owned by user + auto_layout. */

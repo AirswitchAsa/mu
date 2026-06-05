@@ -5,4 +5,5 @@ export { RendererRegistry, type RendererDef } from "./renderer-registry.js";
 export { SessionStore } from "./session-store.js";
 export { applyCanvasOps, type CanvasDeps } from "./canvas.js";
 export { buildCanvasSummary, buildCanvasState } from "./canvas-summary.js";
+export { buildPrimingText } from "./transcript-priming.js";
 export { placeWindow, GRID_COLS } from "./auto-layout.js";

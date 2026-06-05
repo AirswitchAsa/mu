@@ -71,8 +71,9 @@ function extractAssistantText(result: unknown): string {
 /**
  * OpencodeDriver — supervises a headless opencode and drives it over the SDK
  * (opencode-driver.dog.md). Spawns `opencode serve` with the µ plugin + model
- * configured; the plugin reaches µ via MU_CALLBACK_URL. One opencode session per
- * µ session (ids shared 1:1).
+ * configured; the plugin reaches µ via MU_CALLBACK_URL. opencode is a disposable
+ * executor: µ binds a µ session to an opencode session id, but re-mints a fresh
+ * one (reconcile-on-miss) whenever opencode has dropped it. Ids are no longer 1:1.
  */
 export class OpencodeDriver {
   private constructor(
@@ -140,6 +141,24 @@ export class OpencodeDriver {
 
   async deleteSession(id: string): Promise<void> {
     await this.client.session.delete({ path: { id } }).catch(() => undefined);
+  }
+
+  /**
+   * Reconcile-on-miss probe: does opencode still know this session id? After a
+   * µ restart (or an opencode restart) a µ session's recorded `opencodeSessionId`
+   * may point at a session opencode has dropped — opencode is a disposable
+   * executor and µ never depends on it persisting anything. Returns false on a
+   * 404 / any error, so the caller treats "can't confirm" as "gone" and re-mints.
+   */
+  async sessionExists(id: string): Promise<boolean> {
+    try {
+      const result = await this.client.session.get({ path: { id } });
+      // session.get resolves with `data` on a hit; a 404 throws (→ caught below).
+      const data = (result as { data?: unknown }).data;
+      return data != null;
+    } catch {
+      return false;
+    }
   }
 
   /**

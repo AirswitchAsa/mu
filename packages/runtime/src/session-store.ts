@@ -3,9 +3,11 @@ import { join } from "node:path";
 import { MuErrorException, type SessionState } from "@mu/protocol";
 
 /**
- * SessionStore — all live sessions' SessionState (session-store.dog.md). A µ
- * session id maps 1:1 to an opencode session id. Holds bindings, never data;
- * dropping a session touches no broker data.
+ * SessionStore — all live sessions' SessionState (session-store.dog.md). The µ
+ * session id is authoritative and stable; the opencode session it currently
+ * drives is recorded separately as `opencodeSessionId` (re-mintable, see
+ * reconcile-on-miss) — no longer 1:1. Holds bindings, never data; dropping a
+ * session touches no broker data.
  *
  * Optionally durable: given a `dir`, each session is mirrored to `<dir>/<id>.json`
  * (atomic temp-then-rename, best-effort) and rehydrated via `load()` on boot, so a
@@ -15,6 +17,10 @@ import { MuErrorException, type SessionState } from "@mu/protocol";
  */
 export class SessionStore {
   private readonly sessions = new Map<string, SessionState>();
+  /** Per-id write chain: serializes a session's mirror writes so two rapid saves
+   *  (e.g. create() then persist()) can't race on the shared temp file and land
+   *  out of issue order — the last save issued must be the one on disk. */
+  private readonly writeChains = new Map<string, Promise<void>>();
 
   constructor(private readonly dir?: string) {}
 
@@ -45,12 +51,19 @@ export class SessionStore {
   private save(state: SessionState): void {
     const path = this.fileFor(state.id);
     if (!path) return;
+    // Snapshot the state NOW (issue order), then enqueue behind this id's prior
+    // write so the temp-then-rename pairs never interleave.
+    const data = JSON.stringify(state);
     const tmp = `${path}.tmp`;
-    void writeFile(tmp, JSON.stringify(state), "utf8")
+    const prev = this.writeChains.get(state.id) ?? Promise.resolve();
+    const next = prev
+      .catch(() => undefined)
+      .then(() => writeFile(tmp, data, "utf8"))
       .then(() => rename(tmp, path))
       .catch(() => {
         /* best-effort: a failed mirror never breaks the live session */
       });
+    this.writeChains.set(state.id, next);
   }
 
   /** Persist the current state for `id` (call after in-place mutations, e.g. messages). */

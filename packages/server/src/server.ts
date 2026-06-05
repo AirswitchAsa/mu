@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import { MuErrorException, traceFromOp, type CanvasOp, type TraceLine } from "@mu/protocol";
-import { MuRuntime, type MuEvent } from "@mu/runtime";
+import { MuRuntime, buildPrimingText, type MuEvent } from "@mu/runtime";
 import { OpencodeDriver } from "@mu/opencode-plugin";
 import { coreRenderers } from "./core-renderers.js";
 
@@ -147,8 +147,13 @@ export async function createMuServer(opts: MuServerOptions): Promise<MuServerHan
     }
     // POST /api/sessions
     if (method === "POST" && seg[1] === "sessions" && seg.length === 2) {
-      const id = driver ? await driver.createSession() : randomUUID();
-      runtime.createSession(id);
+      // µ owns its identity: the µ id is ALWAYS a fresh uuid, never the opencode
+      // id. When a driver exists we ALSO mint an opencode session as the
+      // (disposable) executor and record it as `opencodeSessionId`; API-only
+      // servers leave it undefined (resolveOpencodeId then falls back to the µ id).
+      const id = randomUUID();
+      const opencodeSessionId = driver ? await driver.createSession() : undefined;
+      runtime.createSession(id, opencodeSessionId);
       sendJson(res, 201, { sessionId: id });
       return;
     }
@@ -156,7 +161,9 @@ export async function createMuServer(opts: MuServerOptions): Promise<MuServerHan
       const id = seg[2];
       // DELETE /api/sessions/:id
       if (method === "DELETE" && seg.length === 3) {
-        if (driver) await driver.deleteSession(id);
+        // Tear down the BOUND opencode session (resolved µ-id → opencode-id), not
+        // the µ id, which is no longer the opencode id.
+        if (driver) await driver.deleteSession(runtime.resolveOpencodeId(id));
         runtime.deleteSession(id);
         sendJson(res, 200, { ok: true });
         return;
@@ -168,7 +175,7 @@ export async function createMuServer(opts: MuServerOptions): Promise<MuServerHan
       }
       // GET /api/sessions/:id/title  (opencode's auto-generated session title)
       if (method === "GET" && seg[3] === "title") {
-        const title = driver ? await driver.getSessionTitle(id) : undefined;
+        const title = driver ? await driver.getSessionTitle(runtime.resolveOpencodeId(id)) : undefined;
         sendJson(res, 200, { title: title ?? null });
         return;
       }
@@ -213,6 +220,25 @@ export async function createMuServer(opts: MuServerOptions): Promise<MuServerHan
     turnsInFlight.add(id);
     const activeDriver = driver;
     const text = String(body["text"] ?? "");
+    // --- reconcile-on-miss (Workstream 3) -----------------------------------
+    // µ is the authoritative record; opencode is a disposable executor. Resolve
+    // the µ session's bound opencode id and confirm opencode still knows it. If
+    // it's missing (API-only session that grew a driver, or a sidecar rehydrated
+    // after opencode dropped the session), mint a FRESH opencode session, rebind
+    // + persist, and prime it with the stored transcript so the agent has the
+    // prior dialogue. Best-effort: a failed prime must not block the turn. Canvas
+    // state needs no replay — inject_canvas_state re-injects it every turn below.
+    // (Localized block; the streaming loop further down is untouched.)
+    let opencodeId = runtime.resolveOpencodeId(id);
+    const hadBinding = Boolean(runtime.sessions.get(id)?.opencodeSessionId);
+    let primingText: string | undefined;
+    if (!hadBinding || !(await activeDriver.sessionExists(opencodeId))) {
+      opencodeId = await activeDriver.createSession();
+      runtime.bindOpencodeSession(id, opencodeId);
+      // Only prime when there's prior dialogue to carry across the re-mint.
+      primingText = buildPrimingText(runtime.sessions.require(id).messages);
+    }
+    // ------------------------------------------------------------------------
     res.writeHead(200, {
       "content-type": "text/event-stream",
       "cache-control": "no-cache",
@@ -238,7 +264,7 @@ export async function createMuServer(opts: MuServerOptions): Promise<MuServerHan
       if (settled || aborted) return;
       aborted = true;
       unsubscribe();
-      void activeDriver.abort(id);
+      void activeDriver.abort(opencodeId);
     });
     try {
       // Re-`require` the session at each push: a canvas op during the turn replaces
@@ -248,7 +274,12 @@ export async function createMuServer(opts: MuServerOptions): Promise<MuServerHan
       runtime.sessions.persist(id);
       // inject_canvas_state: the cheap summary rides along as an extra prompt part.
       const summary = runtime.canvasSummary(id);
-      const reply = await activeDriver.prompt(id, text, [`\n\n[µ canvas state] ${JSON.stringify(summary)}`]);
+      const extraParts = [`\n\n[µ canvas state] ${JSON.stringify(summary)}`];
+      // After a reconcile re-mint, replay the prior transcript on THIS first
+      // prompt so the fresh opencode session has conversational context.
+      if (primingText) extraParts.push(`\n\n${primingText}`);
+      // Drive the BOUND opencode session (post-reconcile), not the µ id.
+      const reply = await activeDriver.prompt(opencodeId, text, extraParts);
       if (aborted) return; // client gone — don't record/publish a turn nobody is listening to
       runtime.sessions.require(id).messages.push({ role: "assistant", text: reply, at: Date.now(), ops: [...ops] });
       runtime.sessions.persist(id);
