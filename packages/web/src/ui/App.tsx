@@ -3,7 +3,8 @@ import { applyTimelineEvent, emptyTimeline, type CanvasOp, type CanvasState, typ
 import { handlesToResolve, reconcile } from "../lib/manifest";
 import { presetForSize } from "../lib/grid";
 import type { DataMap } from "../lib/types";
-import { createSession, deleteSession, getCanvas, getMessages, postUserOps, refreshSession, resolveHandle, sessionTitle, streamMessage } from "../lib/api";
+import { cancelTurn, createSession, deleteSession, getCanvas, getMessages, openEvents, postUserOps, refreshSession, resolveHandle, sendMessage, sessionTitle } from "../lib/api";
+import type { MuStreamEvent } from "../lib/types";
 import type { RenderTheme } from "../renderers/types";
 import { Canvas } from "./Canvas";
 import { Chat, type ChatTurn, type TraceLine } from "./Chat";
@@ -82,10 +83,13 @@ export function App(): JSX.Element {
   const prevManifest = useRef<Record<string, CanvasState | null>>({});
   const booted = useRef(false);
   const composerRef = useRef<HTMLTextAreaElement>(null);
-  // Per-session in-flight AbortController, so the stop button can cancel the active
-  // turn's SSE stream (the backend then aborts the agent via res.on("close")).
-  const aborters = useRef<Record<string, AbortController>>({});
-  // current active session, readable inside long-running async turns (for unread).
+  // One open read stream (EventSource closer) per OPENED session, and the in-flight
+  // timeline accumulator each turn folds into. The stream is the only live channel —
+  // commands just POST; events drive every state change — so a refresh or a second tab
+  // re-attaches by reconnecting, never by re-running the turn.
+  const streams = useRef<Record<string, () => void>>({});
+  const tls = useRef<Record<string, ReturnType<typeof emptyTimeline>>>({});
+  // current active session, readable inside the (long-lived) stream handler (for unread).
   const activeIdRef = useRef(activeId);
   useEffect(() => {
     activeIdRef.current = activeId;
@@ -149,10 +153,88 @@ export function App(): JSX.Element {
     [setView, resolveNeeded, evictCache],
   );
 
-  // Load a session's canvas (recreating a stale id after a server restart).
+  // --- live read stream (CQRS) ---------------------------------------------
+  // Fold one event for session `id` into its view. Held in a ref and reassigned every
+  // render so the long-lived EventSource always calls the freshest closures without
+  // re-subscribing. The stream is the SOLE source of truth for the live turn: the user
+  // bubble, the streaming items, the commit, the canvas — all flow from here, so this
+  // device, a second device, and a post-refresh reconnect all converge on the same state.
+  const onEventRef = useRef<(id: string, e: MuStreamEvent) => void>(() => undefined);
+  onEventRef.current = (id, e): void => {
+    const tl = tls.current[id] ?? (tls.current[id] = emptyTimeline());
+    const opsOf = (): TraceLine[] => tl.items.filter((it): it is Extract<TurnItem, { kind: "tool" }> => it.kind === "tool");
+    const markUnread = (): void => {
+      if (id !== activeIdRef.current) setSessions((list) => list.map((s) => (s.id === id ? { ...s, unread: true } : s)));
+    };
+    switch (e.type) {
+      case "chat":
+        if (e.role === "user") {
+          // A turn began (here or on another device): show the prompt, reset the in-flight
+          // timeline, enter "thinking". The single source for the user bubble (no optimistic
+          // echo), so every reader renders it identically.
+          tls.current[id] = emptyTimeline();
+          setView(id, (v) => ({ ...v, chat: [...v.chat, { role: "user", text: e.text }], pending: [], thinking: true }));
+        } else {
+          // Authoritative final assistant text → commit the turn from the streamed items.
+          setView(id, (v) => ({ ...v, chat: [...v.chat, { role: "assistant", text: e.text, items: [...tl.items], ops: opsOf() }], pending: [], thinking: false }));
+        }
+        return;
+      case "canvas":
+        applyTimelineEvent(tl, e);
+        applyManifest(id, e.state);
+        setView(id, (v) => ({ ...v, pending: [...tl.items], thinking: true }));
+        return;
+      case "tool":
+      case "chat_delta":
+        applyTimelineEvent(tl, e);
+        setView(id, (v) => ({ ...v, pending: [...tl.items], thinking: true }));
+        return;
+      case "error": {
+        const stopped = e.error.code === "STOPPED";
+        setView(id, (v) => ({
+          ...v,
+          chat: [...v.chat, { role: "assistant", text: "", error: stopped ? "stopped" : `${e.error.code ?? "ERROR"}: ${e.error.message}`, items: tl.items.length ? [...tl.items] : undefined, ops: opsOf() }],
+          pending: [],
+          thinking: false,
+        }));
+        tls.current[id] = emptyTimeline();
+        void syncTitle(id);
+        markUnread();
+        return;
+      }
+      case "done":
+        setView(id, (v) => ({ ...v, thinking: false, pending: [] }));
+        tls.current[id] = emptyTimeline();
+        void syncTitle(id); // opencode has (re)generated the title by turn-end
+        markUnread();
+        return;
+    }
+  };
+
+  // Open (once) a session's read stream. Idempotent — a session keeps a single stream for
+  // the app's life, so switching away never drops a background turn and switching back never
+  // double-subscribes. A fresh connect replays an in-flight turn; an idle one only tails new.
+  const connect = useCallback((id: string): void => {
+    if (streams.current[id]) return;
+    streams.current[id] = openEvents(id, (e) => onEventRef.current(id, e));
+  }, []);
+
+  // Tear down every stream on unmount.
+  useEffect(() => {
+    const open = streams.current;
+    return () => {
+      for (const close of Object.values(open)) close();
+    };
+  }, []);
+
+  // Load a session's canvas + history, then open its live stream (which replays any
+  // in-flight turn — this is what makes a refresh mid-generation rejoin it).
   const ensureCanvas = useCallback(
     async (id: string): Promise<void> => {
-      if (prevManifest.current[id]) return;
+      if (prevManifest.current[id]) {
+        connect(id); // already loaded → make sure the stream is open (e.g. after a swap)
+        return;
+      }
       try {
         const [canvas, messages] = await Promise.all([getCanvas(id), getMessages(id)]);
         applyManifest(id, canvas);
@@ -160,15 +242,17 @@ export function App(): JSX.Element {
           setView(id, (v) => ({ ...v, chat: messages.map(toTurn) }));
           void syncTitle(id); // a session with history has an opencode title to adopt
         }
+        connect(id);
       } catch {
         // stale id — re-create a server session, keep the name, swap the id
         const nid = await createSession();
         setSessions((list) => list.map((s) => (s.id === id ? { ...s, id: nid } : s)));
         setActiveId((cur) => (cur === id ? nid : cur));
         applyManifest(nid, { id: nid, windows: [], layout: {} });
+        connect(nid);
       }
     },
-    [applyManifest, setView, syncTitle],
+    [applyManifest, setView, syncTitle, connect],
   );
 
   // --- bootstrap -----------------------------------------------------------
@@ -197,69 +281,34 @@ export function App(): JSX.Element {
   for (const s of sessions) counts[s.id] = views[s.id]?.manifest?.windows.length ?? 0;
 
   // --- agent loop ----------------------------------------------------------
+  // Send is a pure COMMAND: POST and return. The turn's events — including the echo of
+  // this prompt — arrive on the read stream (onEventRef) like any other, so a refresh or
+  // a second device sees an identical turn. We set `thinking` optimistically for instant
+  // feedback (the stream confirms it ~1 RTT later); a failed command rolls it back.
   const onSend = useCallback(
     async (text: string): Promise<void> => {
       const id = activeId;
       if (!id || (views[id] ?? emptyView()).thinking) return;
-      setView(id, (v) => ({ ...v, chat: [...v.chat, { role: "user", text }], thinking: true, pending: [] }));
-      // Build the live interleaved timeline with the SAME pure folder the server
-      // persists, so the in-flight render and the committed/restored turn match
-      // exactly (live≡reload). `ops` is derived from it for the legacy fallback.
-      const tl = emptyTimeline();
-      const opsOf = (): TraceLine[] => tl.items.filter((it): it is Extract<TurnItem, { kind: "tool" }> => it.kind === "tool");
-      const controller = new AbortController();
-      aborters.current[id] = controller;
-      let committed = false; // a terminal chat/error already wrote the assistant turn
-      const commit = (turn: ChatTurn): void => {
-        committed = true;
-        setView(id, (v) => ({ ...v, chat: [...v.chat, turn] }));
-      };
+      connect(id); // ensure the stream is open before the echo/events land
+      setView(id, (v) => ({ ...v, thinking: true }));
       try {
-        await streamMessage(
-          id,
-          text,
-          (e) => {
-            // Fold every event into the timeline first (text/reasoning upsert by partId,
-            // tool/canvas append in order), then re-render the in-flight turn from it.
-            applyTimelineEvent(tl, e);
-            if (e.type === "canvas") applyManifest(id, e.state);
-            if (e.type === "chat" && e.role === "assistant") {
-              // Terminal text is authoritative; keep the streamed items as the render
-              // source and carry text/ops as the legacy fallback.
-              commit({ role: "assistant", text: e.text, items: [...tl.items], ops: opsOf() });
-            } else if (e.type === "error") {
-              commit({ role: "assistant", text: "", error: `${e.error.code ?? "ERROR"}: ${e.error.message}`, items: [...tl.items], ops: opsOf() });
-            } else {
-              setView(id, (v) => ({ ...v, pending: [...tl.items] }));
-            }
-          },
-          controller.signal,
-        );
+        await sendMessage(id, text);
       } catch (err) {
-        // Abort is expected (the stop button) — keep the partial turn, labeled
-        // "stopped". Any other error commits an error turn (unless one already landed).
-        if (controller.signal.aborted) {
-          if (!committed) commit({ role: "assistant", text: "", items: [...tl.items], ops: opsOf(), error: "stopped" });
-        } else if (!committed) {
-          commit({ role: "assistant", text: "", error: err instanceof Error ? err.message : String(err), items: tl.items.length ? [...tl.items] : undefined, ops: opsOf() });
-        }
-      } finally {
-        delete aborters.current[id];
-        setView(id, (v) => ({ ...v, thinking: false, pending: [] }));
-        // the reply landed somewhere the user isn't looking → mark it unread.
-        if (id !== activeIdRef.current) {
-          setSessions((list) => list.map((s) => (s.id === id ? { ...s, unread: true } : s)));
-        }
-        void syncTitle(id); // opencode has (re)generated the title by turn-end
+        // NO_DRIVER / BUSY / transport — surface it and drop back out of "thinking".
+        setView(id, (v) => ({
+          ...v,
+          thinking: false,
+          chat: [...v.chat, { role: "assistant", text: "", error: err instanceof Error ? err.message : String(err) }],
+        }));
       }
     },
-    [activeId, views, setView, applyManifest, syncTitle],
+    [activeId, views, setView, connect],
   );
 
-  // Cancel the active session's in-flight turn. Aborting the fetch fires the SSE
-  // stream's `close` on the server, which aborts the agent; the partial turn is kept.
+  // Stop the in-flight turn: an explicit command (NOT a socket close). The server aborts
+  // the agent and emits a STOPPED event, which the stream commits as the partial turn.
   const onStop = useCallback((): void => {
-    aborters.current[activeId]?.abort();
+    void cancelTurn(activeId);
   }, [activeId]);
 
   // --- manual refresh (global) --------------------------------------------
@@ -299,9 +348,10 @@ export function App(): JSX.Element {
     setSessions((list) => [...list, { id, name: `session ${n}` }]);
     setActiveId(id);
     applyManifest(id, { id, windows: [], layout: {} });
+    connect(id); // open its read stream (a fresh session, so just tails new events)
     setRailOpen(false);
     composerRef.current?.focus();
-  }, [sessions.length, applyManifest]);
+  }, [sessions.length, applyManifest, connect]);
 
   const onRename = useCallback((id: string, name: string): void => {
     // a manual rename pins the name — stop syncing it from opencode's title.
@@ -311,6 +361,9 @@ export function App(): JSX.Element {
   const onDelete = useCallback(
     async (id: string): Promise<void> => {
       void deleteSession(id).catch(() => undefined); // best-effort; client list is source of truth
+      streams.current[id]?.(); // close its read stream
+      delete streams.current[id];
+      delete tls.current[id];
       delete prevManifest.current[id];
       evictCache(); // free rows that were only bound by this session's windows
       setViews((prev) => {
@@ -329,10 +382,11 @@ export function App(): JSX.Element {
           setSessions([{ id: nid, name: "session 1" }]);
           setActiveId(nid);
           applyManifest(nid, { id: nid, windows: [], layout: {} });
+          connect(nid);
         }
       }
     },
-    [sessions, activeId, ensureCanvas, applyManifest, evictCache],
+    [sessions, activeId, ensureCanvas, applyManifest, evictCache, connect],
   );
 
   // --- user layout / content edits ----------------------------------------

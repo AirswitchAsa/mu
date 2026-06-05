@@ -1,3 +1,5 @@
+import { mkdirSync } from "node:fs";
+import { resolve } from "node:path";
 import { createOpencodeClient, createOpencodeServer } from "@opencode-ai/sdk";
 import { getPluginPath } from "./plugin-path.js";
 import type { MuDriver, TurnDelta } from "./mu-driver.js";
@@ -15,6 +17,22 @@ export interface OpencodeDriverOptions {
    *  `TurnTimeoutError` so the SSE stream always terminates instead of hanging
    *  the UI on "composing" forever. Default 180s; `0` disables. */
   timeoutMs?: number;
+  /**
+   * opencode's data home — set as `XDG_DATA_HOME` for the spawned `serve`, which keeps
+   * its session/message storage under `<dataHome>/opencode/project/<slug>/storage`.
+   * Pinning it to a known, stable path is what lets a µ session resume the SAME opencode
+   * session after a `serve` restart (sessionExists → reuse) instead of always re-minting
+   * via reconcile-on-miss. Omit → opencode's default (`~/.local/share`).
+   */
+  dataHome?: string;
+  /**
+   * The opencode "project" the sessions are filed under — sent as the client `directory`
+   * (an `x-opencode-directory` header on every call). opencode derives the storage slug
+   * from this; pinning it decouples the slug from the spawned process's cwd, so resume
+   * doesn't silently break if µ is ever launched from a different directory. Omit → opencode
+   * derives the project from cwd.
+   */
+  projectDir?: string;
 }
 
 const DEFAULT_TIMEOUT_MS = 180_000;
@@ -40,6 +58,78 @@ function withTimeout<T>(p: Promise<T>, ms: number): Promise<T> {
       },
     );
   });
+}
+
+/**
+ * Pure reducer over opencode's GLOBAL event stream that rebuilds the per-part cumulative
+ * prose/reasoning for one session. Extracted (and exported) so it can be unit-tested
+ * against the real opencode event shapes without spawning opencode — the live suite is
+ * the drift-catcher for the shapes themselves. Returns a `TurnDelta` to forward, or null.
+ *
+ * Tokens arrive as `message.part.delta` — `{ partID, field, delta }`, one INCREMENTAL
+ * token each. `message.part.updated` fires only twice per part (empty at start, full at
+ * completion) and is NOT the token stream; we use its completion frame to reconcile the
+ * accumulator. `message.updated` carries the messageID→role map so we never echo the
+ * user's own text part back as assistant prose.
+ */
+export interface DeltaReducerState {
+  /** messageID → role ("assistant" | "user" | …), learned from `message.updated`. */
+  readonly role: Map<string, string>;
+  /** partID → running cumulative text, rebuilt from the incremental delta stream. */
+  readonly acc: Map<string, string>;
+}
+
+export function newDeltaState(): DeltaReducerState {
+  return { role: new Map(), acc: new Map() };
+}
+
+const fieldToKind = (f: unknown): "text" | "reasoning" | undefined =>
+  f === "text" ? "text" : f === "reasoning" ? "reasoning" : undefined;
+
+export function reduceOpencodeEvent(
+  sessionId: string,
+  raw: unknown,
+  state: DeltaReducerState,
+): TurnDelta | null {
+  const ev = raw as { type?: string; properties?: Record<string, unknown> };
+  if (ev.type === "message.updated") {
+    const info = ev.properties?.["info"] as { id?: string; sessionID?: string; role?: string } | undefined;
+    if (info?.sessionID === sessionId && typeof info.id === "string" && typeof info.role === "string") {
+      state.role.set(info.id, info.role);
+    }
+    return null;
+  }
+  if (ev.type === "message.part.delta") {
+    // The live token stream. `{ sessionID, messageID, partID, field, delta }`.
+    const p = ev.properties as
+      | { sessionID?: string; messageID?: string; partID?: string; field?: string; delta?: string }
+      | undefined;
+    if (!p || p.sessionID !== sessionId) return null; // global stream → filter mandatory
+    const kind = fieldToKind(p.field);
+    if (!kind) return null; // only prose/reasoning; ignore tool/file/etc. fields
+    if (typeof p.partID !== "string" || typeof p.delta !== "string") return null;
+    if (p.delta.length === 0) return null; // empty frames add nothing (and can carry a stray field)
+    if (state.role.get(String(p.messageID)) !== "assistant") return null; // never echo the user part
+    const next = (state.acc.get(p.partID) ?? "") + p.delta;
+    state.acc.set(p.partID, next);
+    return { partId: p.partID, kind, text: next };
+  }
+  if (ev.type !== "message.part.updated") return null;
+  const part = ev.properties?.["part"] as
+    | { id?: string; sessionID?: string; messageID?: string; type?: string; text?: string }
+    | undefined;
+  if (!part || part.sessionID !== sessionId) return null; // global stream → filter is mandatory
+  if (part.type !== "text" && part.type !== "reasoning") return null;
+  if (typeof part.id !== "string" || typeof part.text !== "string") return null;
+  // Only forward assistant prose, never the user message we just sent. If the role isn't
+  // known yet, skip (it'll arrive cumulatively on a later frame).
+  if (state.role.get(String(part.messageID)) !== "assistant") return null;
+  // The completion frame is authoritative; the empty start frame has nothing to show.
+  // Skip every empty part.updated — real content arrives via deltas or a non-empty
+  // completion frame, so emitting "" would only blank an already-streaming part.
+  if (part.text.length === 0) return null;
+  state.acc.set(part.id, part.text);
+  return { partId: part.id, kind: part.type, text: part.text };
 }
 
 /** Parse "provider/model" into the prompt body's model shape. */
@@ -88,9 +178,27 @@ export class OpencodeDriver implements MuDriver {
     // The plugin (in opencode's process) reads these to find + authenticate to µ.
     process.env["MU_CALLBACK_URL"] = opts.callbackUrl;
     if (opts.callbackToken) process.env["MU_CALLBACK_TOKEN"] = opts.callbackToken;
-    // Only set hostname/port when provided — passing `undefined` makes the SDK
-    // spawn `serve --hostname=undefined --port=0`, which fails to bind.
+    // Pin opencode's storage to a known home so its sessions survive a `serve` restart
+    // and resume directly. The SDK spawns `opencode serve` with `...process.env`, so
+    // setting XDG_DATA_HOME here is inherited by the child; opencode then keeps every
+    // session/message under `<dataHome>/opencode/...`. (mkdir first — opencode would
+    // create it, but a guaranteed-present home avoids a first-run race.)
+    if (opts.dataHome) {
+      const home = resolve(opts.dataHome);
+      mkdirSync(home, { recursive: true });
+      process.env["XDG_DATA_HOME"] = home;
+    }
     const serverOpts: Parameters<typeof createOpencodeServer>[0] = {
+      // Ephemeral port by default (0 → OS-assigned; the SDK reads the real URL back from
+      // serve's stdout). opencode's port is purely internal — µ reaches it via that URL
+      // and the plugin calls back to µ's OWN port — so binding a FIXED port only invites
+      // collisions with any other opencode on 4096 (the user's editor, a stray serve).
+      // Must be a real number, never `undefined`: the SDK's Object.assign lets an explicit
+      // `undefined` override its 4096 default → `--port=undefined`, which fails to bind.
+      port: opts.port ?? 0,
+      // A fresh data home runs a one-time DB migration on first boot; allow startup more
+      // than the SDK's 5s default so the bind wait never trips on it.
+      timeout: 60_000,
       config: {
         plugin: [getPluginPath()],
         model: opts.model,
@@ -122,10 +230,17 @@ export class OpencodeDriver implements MuDriver {
         },
       },
     };
+    // hostname stays guarded: an explicit `undefined` would likewise override the SDK's
+    // 127.0.0.1 default → `--hostname=undefined`. (port is already set above.)
     if (opts.hostname !== undefined) serverOpts.hostname = opts.hostname;
-    if (opts.port !== undefined) serverOpts.port = opts.port;
     const server = await createOpencodeServer(serverOpts);
-    const client = createOpencodeClient({ baseUrl: server.url });
+    // `directory` stamps `x-opencode-directory` on every call, pinning the project the
+    // sessions are filed under so the storage slug is stable across restarts regardless
+    // of where this process was launched. Without it, resume is hostage to cwd.
+    const client = createOpencodeClient({
+      baseUrl: server.url,
+      ...(opts.projectDir ? { directory: resolve(opts.projectDir) } : {}),
+    });
     return new OpencodeDriver(server, client, opts.model, opts.timeoutMs ?? DEFAULT_TIMEOUT_MS);
   }
 
@@ -226,13 +341,11 @@ export class OpencodeDriver implements MuDriver {
   }
 
   /**
-   * Tail the opencode event stream for one turn, forwarding cumulative text/reasoning
-   * part updates to `onDelta`. The `/event` stream is GLOBAL (every session), so we
-   * MUST filter by `sessionID` — and we MUST exclude the user message we just sent,
-   * since its part is also a `text` part. We track message roles from `message.updated`
-   * events (keyed by messageID) and only forward parts whose owning message is known
-   * to be an assistant message. Returns a `stop()` that ends the generator (closing the
-   * HTTP stream) so the subscription can't leak past the turn.
+   * Tail opencode's GLOBAL event stream for one turn, feeding each event through
+   * `reduceOpencodeEvent` (which filters by session, tracks roles, and rebuilds the
+   * per-part cumulative prose from the incremental `message.part.delta` token stream)
+   * and forwarding any resulting `TurnDelta`. Returns a `stop()` that ends the generator
+   * (closing the HTTP stream) so the subscription can't leak past the turn.
    */
   private streamDeltas(
     sessionId: string,
@@ -240,35 +353,15 @@ export class OpencodeDriver implements MuDriver {
   ): { stop(): void } {
     let generator: AsyncGenerator<unknown> | undefined;
     let stopped = false;
-    // messageID → role, learned from `message.updated`. A part is forwarded only once
-    // its message is confirmed assistant; parts of the just-sent user message stay out.
-    const role = new Map<string, string>();
+    const state = newDeltaState();
     void (async () => {
       try {
         const sub = await this.client.event.subscribe();
         if (stopped) return; // stop() raced ahead of subscribe resolving
         generator = sub.stream as AsyncGenerator<unknown>;
         for await (const raw of generator) {
-          // The stream yields the `Event` union; code defensively against `unknown`.
-          const ev = raw as { type?: string; properties?: Record<string, unknown> };
-          if (ev.type === "message.updated") {
-            const info = ev.properties?.["info"] as { id?: string; sessionID?: string; role?: string } | undefined;
-            if (info?.sessionID === sessionId && typeof info.id === "string" && typeof info.role === "string") {
-              role.set(info.id, info.role);
-            }
-            continue;
-          }
-          if (ev.type !== "message.part.updated") continue;
-          const part = ev.properties?.["part"] as
-            | { id?: string; sessionID?: string; messageID?: string; type?: string; text?: string }
-            | undefined;
-          if (!part || part.sessionID !== sessionId) continue; // global stream → filter is mandatory
-          if (part.type !== "text" && part.type !== "reasoning") continue;
-          if (typeof part.id !== "string" || typeof part.text !== "string") continue;
-          // Only forward assistant prose, never the user message we just sent. If the
-          // role isn't known yet, skip (it'll arrive cumulatively on a later frame).
-          if (role.get(String(part.messageID)) !== "assistant") continue;
-          onDelta({ partId: part.id, kind: part.type, text: part.text });
+          const delta = reduceOpencodeEvent(sessionId, raw, state);
+          if (delta) onDelta(delta);
         }
       } catch {
         // A torn-down stream (stop → generator.return) or a transient subscribe error

@@ -50,8 +50,29 @@ pnpm dev:web                              # → http://localhost:5173
 
 µ works with **no API keys** (Yahoo/CNBC RSS for prices + news). Keys unlock more
 sources — copy [`.env.example`](.env.example) to `.env` and fill in what you want
-(`FINNHUB_API_KEY`, `FRED_API_KEY`). The agent runs on whatever model your
-[opencode](https://github.com/sst/opencode) install is authenticated for.
+(`FINNHUB_API_KEY`, `FRED_API_KEY`). The agent is enabled by two values: `MU_MODEL`
+(a `provider/model`) and that provider's key (`<PROVIDER>_API_KEY`, e.g.
+`DEEPSEEK_API_KEY`); µ supervises a headless [opencode](https://github.com/sst/opencode)
+to drive it. Omit `MU_MODEL` to run **API-only** (no agent).
+
+## Run with Docker
+
+A **self-contained published image** runs the whole thing — web + API + the agent — in one
+container on one port. You only bring a model key:
+
+```bash
+docker run --rm -p 4000:4000 -v mu-data:/data \
+  -e MU_MODEL=deepseek/deepseek-v4-pro \
+  -e DEEPSEEK_API_KEY=sk-... \
+  docker.io/spicadust/mu:latest
+```
+
+Then open **http://localhost:4000**. Unlike dev (where Vite serves the web on `:5173`
+separately), the image serves the web *same-origin* from the API server — one port, no CORS.
+The `/data` volume persists the store, sessions, and the agent's own storage across restarts.
+
+See **[DOCKER.md](DOCKER.md)** for the full image reference: every env var, volumes, API-only
+mode, building the image yourself, and troubleshooting.
 
 ## Architecture
 

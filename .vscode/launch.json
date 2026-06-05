@@ -3,8 +3,11 @@
   // backend (:4000) and the web dev server (:5173) together, then open
   // http://localhost:5173 and talk to the agent.
   //
-  // Requires DeepSeek authed in opencode (the agent provider). Omit MU_MODEL below
-  // to run the API only (no agent; /message returns NO_DRIVER).
+  // Config comes from `.env` (gitignored; copy from .env.example). Two values turn the
+  // agent on: MU_MODEL (provider/model) + that provider's <PROVIDER>_API_KEY. Leave
+  // MU_MODEL unset for API-only (no agent; /message returns NO_DRIVER). Do NOT set
+  // MU_MODEL here — `env` entries override `.env` (Node won't overwrite an already-set
+  // var), which would pin a stale model.
   //
   // node-terminal launches run in an integrated terminal and auto-attach the JS
   // debugger, so breakpoints in the server's TS (dist sourcemaps) work.
@@ -15,11 +18,9 @@
       "request": "launch",
       "name": "µ server (:4000)",
       "command": "pnpm build && pnpm start",
-      "cwd": "${workspaceFolder}",
-      "env": {
-        "MU_MODEL": "deepseek/deepseek-chat",
-        "PORT": "4000"
-      }
+      "cwd": "${workspaceFolder}"
+      // No `env` — `.env` is the single source (MU_MODEL, DEEPSEEK_API_KEY, PORT…).
+      // PORT defaults to 4000 in main.ts; set it in `.env` to change it.
     },
     {
       "type": "node-terminal",

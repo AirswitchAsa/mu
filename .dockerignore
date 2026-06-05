@@ -1,0 +1,21 @@
+# Build the image from sources only — everything below is rebuilt inside the image
+# (pnpm install + tsc + vite) or must never be baked in (secrets, local state).
+.git
+.gitignore
+.vscode
+**/node_modules
+**/dist
+**/*.tsbuildinfo
+.mu-data
+**/.mu-data
+**/.opencode
+# secrets — keys come in at RUN time via -e / --env-file, never the image
+.env
+.env.*
+!.env.example
+# noise
+**/*.log
+**/.DS_Store
+Dockerfile
+.dockerignore
+docker-compose*.yml

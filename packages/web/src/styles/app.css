@@ -411,7 +411,8 @@ body.mu-is-dragging { cursor: grabbing; user-select: none; }
   border-radius: 16px; padding: 8px 14px; font-size: 13.5px; line-height: 1.5;
 }
 [data-theme="dark"] .mu-bubble { background: var(--paper-grey); }
-.mu-turn--agent { flex-direction: row; gap: 12px; align-items: flex-start; }
+/* an agent turn is a vertical stack of lines (base .mu-turn is already a column) */
+.mu-turn--agent { gap: 8px; }
 .mu-turn__role {
   flex: 0 0 auto; width: 26px; height: 26px; border-radius: var(--ds-radius-circle);
   background: var(--action-soft); color: var(--action);
@@ -419,9 +420,12 @@ body.mu-is-dragging { cursor: grabbing; user-select: none; }
   font-family: var(--ds-font-mark); font-size: 14px; font-weight: 700;
   text-transform: none; line-height: 1;
 }
-/* nudge the text down so its first line centers vertically with the µ icon
-   (icon 26px tall vs. a ~21.6px first line → ~2px offset) */
-.mu-turn__col { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 8px; padding-top: 2px; }
+/* one line of an agent turn: [µ avatar] [body]. A prose run carries the avatar; a
+   --sub line (tool / reasoning / continued prose) is indented to align under it. */
+.mu-line { display: flex; gap: 12px; align-items: flex-start; }
+.mu-line--sub { padding-left: 38px; } /* 26px avatar + 12px gap → align under prose */
+/* nudge the prose down ~2px so its first line centers with the 26px avatar */
+.mu-line__body { flex: 1; min-width: 0; padding-top: 2px; }
 .mu-prose { font-size: 13.5px; line-height: 1.6; color: var(--ink); }
 /* markdown elements emitted by react-markdown for agent prose */
 .mu-prose > :first-child { margin-top: 0; }

@@ -1,5 +1,8 @@
 import { randomUUID } from "node:crypto";
+import { createReadStream } from "node:fs";
+import { stat } from "node:fs/promises";
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
+import { extname, join, normalize, resolve as resolvePath, sep } from "node:path";
 import { MuErrorException, traceFromOp, emptyTimeline, applyTimelineEvent, type CanvasOp, type TraceLine } from "@mu/protocol";
 import { MuRuntime, buildPrimingText, type MuEvent } from "@mu/runtime";
 import { OpencodeDriver, type MuDriver } from "@mu/opencode-plugin";
@@ -10,12 +13,32 @@ export interface MuServerOptions {
   dataRoot: string;
   /** dir scanned for first-party resource plugins. */
   resourcesDir: string;
-  /** "provider/model"; when set, the opencode driver is started and /message works. */
+  /** "provider/model" (e.g. deepseek/deepseek-chat); when set, the opencode driver is
+   *  started and /message works. The provider's key comes from `<PROVIDER>_API_KEY`. */
   model?: string;
   port?: number;
   hostname?: string;
   /** Per-turn deadline (ms) for the agent; see OpencodeDriverOptions.timeoutMs. */
   turnTimeoutMs?: number;
+  /**
+   * Where opencode keeps its own session/message storage (its `XDG_DATA_HOME`). Defaults
+   * to `dataRoot`, so opencode data lands at `<dataRoot>/opencode/…` right beside the µ
+   * session sidecars (`<dataRoot>/_sessions`) and the broker store — one `dataRoot`
+   * relocates all µ state together (e.g. a canonical volume in the Docker image). Pinning
+   * it is what lets opencode sessions resume after a `serve` restart instead of always
+   * re-minting via reconcile-on-miss.
+   */
+  opencodeDataHome?: string;
+  /** Stable opencode project the sessions are filed under; defaults to `dataRoot`. See
+   *  OpencodeDriverOptions.projectDir. */
+  opencodeProjectDir?: string;
+  /**
+   * Serve a built web client (the `packages/web/dist` directory) as static files at `/`,
+   * with SPA fallback to `index.html`. Set in the Docker image (MU_WEB_DIR) so one process
+   * serves both the API and the UI same-origin — the client then talks to a relative `/api`
+   * and needs no CORS. Omitted in dev (Vite serves the web on :5173 against this API).
+   */
+  webDir?: string;
   /**
    * Inject the agent driver instead of starting opencode (tests). Receives the same
    * callback url + token the real plugin uses, so a fake can hit `/internal` exactly
@@ -68,6 +91,93 @@ function listen(server: Server, port: number, hostname: string): Promise<void> {
   return new Promise((resolve) => server.listen(port, hostname, resolve));
 }
 
+const CONTENT_TYPES: Record<string, string> = {
+  ".html": "text/html; charset=utf-8",
+  ".js": "text/javascript; charset=utf-8",
+  ".mjs": "text/javascript; charset=utf-8",
+  ".css": "text/css; charset=utf-8",
+  ".json": "application/json; charset=utf-8",
+  ".map": "application/json; charset=utf-8",
+  ".svg": "image/svg+xml",
+  ".png": "image/png",
+  ".jpg": "image/jpeg",
+  ".jpeg": "image/jpeg",
+  ".gif": "image/gif",
+  ".ico": "image/x-icon",
+  ".webp": "image/webp",
+  ".woff": "font/woff",
+  ".woff2": "font/woff2",
+  ".ttf": "font/ttf",
+  ".txt": "text/plain; charset=utf-8",
+  ".webmanifest": "application/manifest+json",
+};
+
+/**
+ * Serve `webDir` as a static SPA: stream the requested file if it resolves to a real file
+ * inside `webDir`, otherwise fall back to `index.html` (client-side routing). Returns false
+ * only if `index.html` itself is missing (misbuilt image) so the caller can 404 honestly.
+ * Path traversal is blocked by confining the resolved path to `webDir`.
+ */
+async function serveStatic(webDir: string, pathname: string, res: ServerResponse): Promise<boolean> {
+  const root = resolvePath(webDir);
+  const indexHtml = join(root, "index.html");
+  // Decode + normalize the request path, then confine it under root. Anything that escapes
+  // (…/.. tricks) or that doesn't resolve to a real file degrades to the SPA index.
+  let target = indexHtml;
+  try {
+    const rel = normalize(decodeURIComponent(pathname)).replace(/^(\.\.(\/|\\|$))+/, "");
+    const candidate = join(root, rel);
+    if ((candidate === root || candidate.startsWith(root + sep)) && pathname !== "/") {
+      const s = await stat(candidate).catch(() => undefined);
+      if (s?.isFile()) target = candidate;
+    }
+  } catch {
+    /* malformed URI → serve the index */
+  }
+  const ext = extname(target).toLowerCase();
+  const type = CONTENT_TYPES[ext] ?? "application/octet-stream";
+  // Hashed build assets are immutable; the HTML entrypoint must always re-validate so a
+  // redeploy is picked up. (Vite emits content-hashed names under /assets.)
+  const cacheControl =
+    target === indexHtml ? "no-cache" : ext === ".html" ? "no-cache" : "public, max-age=31536000, immutable";
+  const exists = await stat(target).then((s) => s.isFile()).catch(() => false);
+  if (!exists) return false; // not even index.html — misbuilt webDir
+  res.writeHead(200, { "content-type": type, "cache-control": cacheControl });
+  await new Promise<void>((resolve, reject) => {
+    const stream = createReadStream(target);
+    stream.on("error", reject);
+    stream.on("end", () => resolve());
+    stream.pipe(res);
+  });
+  return true;
+}
+
+/** The env var opencode reads a provider's key from, by convention: `<PROVIDER>_API_KEY`
+ *  (e.g. `deepseek` → `DEEPSEEK_API_KEY`). */
+export function providerKeyEnvVar(model: string): string {
+  return `${model.slice(0, model.indexOf("/")).toUpperCase().replace(/-/g, "_")}_API_KEY`;
+}
+
+/**
+ * Fail-fast agent-config check, run at boot before opencode is started (a half-configured
+ * agent should refuse to boot, not die on the first turn or silently fall back to
+ * API-only). Verifies the model is `provider/model` AND the provider's key env var is set.
+ * Throws a clear, actionable Error.
+ */
+export function assertAgentConfigured(model: string): void {
+  const slash = model.indexOf("/");
+  if (slash <= 0 || slash === model.length - 1) {
+    throw new Error(`agent model must be "provider/model" (e.g. deepseek/deepseek-chat), got '${model}'`);
+  }
+  const provider = model.slice(0, slash);
+  const keyVar = providerKeyEnvVar(model);
+  if (!process.env[keyVar]) {
+    throw new Error(
+      `agent model '${model}' is set but its provider key '${keyVar}' is empty. Set ${keyVar} in .env.`,
+    );
+  }
+}
+
 /**
  * Boot the µ server (mu-server.dog.md): assemble the runtime (broker + resources +
  * renderers + sessions + tool surface), expose the HTTP/SSE API the web client
@@ -75,6 +185,11 @@ function listen(server: Server, port: number, hostname: string): Promise<void> {
  * model is configured) supervise opencode. One process.
  */
 export async function createMuServer(opts: MuServerOptions): Promise<MuServerHandle> {
+  // Fail fast on a misconfigured agent BEFORE allocating the runtime/server — a half-set
+  // agent should never boot. Skipped when a `driverFactory` (tests) supplies a fake agent.
+  const model = opts.model;
+  if (!opts.driverFactory && model) assertAgentConfigured(model);
+
   const runtime = await MuRuntime.create({
     dataRoot: opts.dataRoot,
     resourcesDir: opts.resourcesDir,
@@ -85,9 +200,18 @@ export async function createMuServer(opts: MuServerOptions): Promise<MuServerHan
   // or a browser page (CORS is open) — that POSTs /internal without it is rejected,
   // so it can't drive the canvas or hammer rate-limited upstreams as if it were the agent.
   const internalToken = randomUUID();
-  // One in-flight agent turn per session: a second concurrent /message is refused
-  // (409) rather than interleaving two turns' chat history and ops-traces.
-  const turnsInFlight = new Set<string>();
+  // The in-flight agent turn per session (at most one — a second /message is refused
+  // 409). The turn runs DETACHED from any HTTP socket: it appends events to the
+  // runtime's per-session log, and readers (GET /events) replay + tail that log. So a
+  // browser refresh or a second device never starts, stops, or duplicates a turn —
+  // they just (re)attach to the stream. `from` is the stream head when the turn began,
+  // so a fresh reader replays the WHOLE turn; `cancelled` lets /cancel short-circuit.
+  interface TurnState {
+    from: number;
+    opencodeId: string;
+    cancelled: boolean;
+  }
+  const turns = new Map<string, TurnState>();
 
   const httpServer = createServer((req, res) => {
     void handle(req, res).catch((err) => sendError(res, err));
@@ -125,6 +249,13 @@ export async function createMuServer(opts: MuServerOptions): Promise<MuServerHan
     }
 
     if (seg[0] !== "api") {
+      // Non-API path. When a built web client is mounted (Docker image), serve it as a
+      // static SPA; the API stays on /api so the client is same-origin. `/internal` was
+      // already handled above. In dev (no webDir) every non-API path is a 404.
+      if (opts.webDir && (method === "GET" || method === "HEAD") && seg[0] !== "internal") {
+        const served = await serveStatic(opts.webDir, url.pathname, res).catch(() => false);
+        if (served) return;
+      }
       sendJson(res, 404, { error: { code: "NOT_FOUND", message: url.pathname } });
       return;
     }
@@ -209,9 +340,19 @@ export async function createMuServer(opts: MuServerOptions): Promise<MuServerHan
         sendJson(res, 200, out);
         return;
       }
-      // POST /api/sessions/:id/message  (SSE)
+      // GET /api/sessions/:id/events  (CQRS read stream: SSE, replay + live tail)
+      if (method === "GET" && seg[3] === "events") {
+        streamEvents(id, url, req, res);
+        return;
+      }
+      // POST /api/sessions/:id/message  (command: start a turn; runs detached, ACK 202)
       if (method === "POST" && seg[3] === "message") {
-        await handleMessage(id, await readJson(req), res);
+        await startTurn(id, await readJson(req), res);
+        return;
+      }
+      // POST /api/sessions/:id/cancel  (command: stop the in-flight turn)
+      if (method === "POST" && seg[3] === "cancel") {
+        cancelTurn(id, res);
         return;
       }
     }
@@ -219,118 +360,156 @@ export async function createMuServer(opts: MuServerOptions): Promise<MuServerHan
     sendJson(res, 404, { error: { code: "NOT_FOUND", message: url.pathname } });
   }
 
-  async function handleMessage(id: string, body: Record<string, unknown>, res: ServerResponse): Promise<void> {
+  // --- command: start a turn (POST /message) ------------------------------------
+  // Validates + reconciles, marks the turn in flight, broadcasts the user prompt, ACKs
+  // 202, and runs the turn DETACHED (runTurn). The HTTP request that triggered it owns
+  // nothing — the turn streams into the event log regardless of who is (or isn't) reading.
+  async function startTurn(id: string, body: Record<string, unknown>, res: ServerResponse): Promise<void> {
     if (!driver) {
       sendJson(res, 400, { error: { code: "NO_DRIVER", message: "server started without a model; /message disabled" } });
       return;
     }
-    if (turnsInFlight.has(id)) {
+    if (turns.has(id)) {
       sendJson(res, 409, { error: { code: "BUSY", message: "a turn is already in progress for this session" } });
       return;
     }
-    turnsInFlight.add(id);
-    const activeDriver = driver;
     const text = String(body["text"] ?? "");
     // --- reconcile-on-miss (Workstream 3) -----------------------------------
-    // µ is the authoritative record; opencode is a disposable executor. Resolve
-    // the µ session's bound opencode id and confirm opencode still knows it. If
-    // it's missing (API-only session that grew a driver, or a sidecar rehydrated
-    // after opencode dropped the session), mint a FRESH opencode session, rebind
-    // + persist, and prime it with the stored transcript so the agent has the
-    // prior dialogue. Best-effort: a failed prime must not block the turn. Canvas
-    // state needs no replay — inject_canvas_state re-injects it every turn below.
-    // (Localized block; the streaming loop further down is untouched.)
+    // µ is the authoritative record; opencode is a disposable executor. Resolve the bound
+    // opencode id and confirm opencode still knows it; if it's gone, mint a fresh session,
+    // rebind + persist, and prime it with the stored transcript so the agent keeps context.
     let opencodeId = runtime.resolveOpencodeId(id);
     const hadBinding = Boolean(runtime.sessions.get(id)?.opencodeSessionId);
     let primingText: string | undefined;
-    if (!hadBinding || !(await activeDriver.sessionExists(opencodeId))) {
-      opencodeId = await activeDriver.createSession();
+    if (!hadBinding || !(await driver.sessionExists(opencodeId))) {
+      opencodeId = await driver.createSession();
       runtime.bindOpencodeSession(id, opencodeId);
-      // Only prime when there's prior dialogue to carry across the re-mint.
       primingText = buildPrimingText(runtime.sessions.require(id).messages);
     }
-    // ------------------------------------------------------------------------
+    // Record the turn at the PRE-turn stream head, so a reader that (re)connects fresh
+    // replays from here and sees the whole turn from its first event.
+    const turn: TurnState = { from: runtime.streamHead(id), opencodeId, cancelled: false };
+    turns.set(id, turn);
+    // The prompt is part of the live turn: broadcast it so every connected device shows
+    // the bubble. It is persisted to the transcript only at turn END (in runTurn), so an
+    // in-flight prompt lives solely in the event log — getMessages never double-counts it
+    // against the replay a refreshing/just-joined client gets.
+    runtime.publish(id, { type: "chat", role: "user", text });
+    sendJson(res, 202, { from: turn.from });
+    void runTurn(id, text, primingText, turn);
+  }
+
+  // The detached turn worker: drives opencode, streaming events into the log; persists the
+  // completed turn to the transcript. Bound to no socket, so a refresh/disconnect can't
+  // abort or duplicate it — only an explicit /cancel (turn.cancelled) stops it early.
+  async function runTurn(id: string, text: string, primingText: string | undefined, turn: TurnState): Promise<void> {
+    const activeDriver = driver!;
+    // Rebuild the interleaved timeline + ops-trace from the SAME log the client reads (we
+    // subscribe to our own stream), so the persisted assistant message renders identically
+    // to the live stream (live≡reload) without a second, divergent fold.
+    const timeline = emptyTimeline();
+    const ops: TraceLine[] = [];
+    const unsubscribe = runtime.subscribeFrom(id, turn.from, ({ event }) => {
+      if (event.type === "tool") ops.push({ verb: event.verb, arg: event.arg, ret: event.ret });
+      else if (event.type === "canvas") ops.push(traceFromOp(event.op));
+      applyTimelineEvent(timeline, event);
+    });
+    const timelineText = (): string => timeline.items.flatMap((it) => (it.kind === "text" ? [it.text] : [])).join("\n\n");
+    const pushUser = (): void => {
+      runtime.sessions.require(id).messages.push({ role: "user", text, at: Date.now() });
+    };
+    const pushAssistant = (t: string): void => {
+      runtime.sessions.require(id).messages.push({
+        role: "assistant",
+        text: t,
+        at: Date.now(),
+        ops: [...ops],
+        ...(timeline.items.length ? { items: [...timeline.items] } : {}),
+      });
+    };
+    try {
+      const summary = runtime.canvasSummary(id);
+      const extraParts = [`\n\n[µ canvas state] ${JSON.stringify(summary)}`];
+      if (primingText) extraParts.push(`\n\n${primingText}`);
+      // Drive the BOUND opencode session. onDelta publishes each cumulative prose/reasoning
+      // part into the log as a chat_delta; the read stream relays it the instant it lands.
+      const reply = await activeDriver.prompt(
+        turn.opencodeId,
+        text,
+        extraParts,
+        (d) => runtime.publish(id, { type: "chat_delta", partId: d.partId, kind: d.kind, text: d.text }),
+      );
+      // Persist user + assistant TOGETHER at the end (completed-turns-only transcript).
+      pushUser();
+      if (turn.cancelled) {
+        pushAssistant(reply.trim() ? reply : timelineText());
+        runtime.sessions.persist(id);
+        runtime.publish(id, { type: "error", error: { code: "STOPPED", message: "stopped by user" } });
+      } else {
+        pushAssistant(reply);
+        runtime.sessions.persist(id);
+        runtime.publish(id, { type: "chat", role: "assistant", text: reply });
+        runtime.publish(id, { type: "done" });
+      }
+    } catch (err) {
+      pushUser(); // record the prompt even on a failed/stopped turn (matches prior behavior)
+      if (turn.cancelled) {
+        pushAssistant(timelineText());
+        runtime.sessions.persist(id);
+        runtime.publish(id, { type: "error", error: { code: "STOPPED", message: "stopped by user" } });
+      } else {
+        runtime.sessions.persist(id);
+        const code =
+          err instanceof MuErrorException ? err.code : err instanceof Error && err.name === "TurnTimeoutError" ? "TIMEOUT" : "FETCH_FAILED";
+        runtime.publish(id, { type: "error", error: { code, message: err instanceof Error ? err.message : String(err) } });
+      }
+    } finally {
+      unsubscribe();
+      turns.delete(id);
+    }
+  }
+
+  // --- query: the read stream (GET /events) -------------------------------------
+  // SSE that replays the log from a cursor then tails it live — the property that makes a
+  // refresh rejoin a running turn and a second device mirror it. Owns NO turn: closing it
+  // (refresh, tab close) never aborts the agent.
+  function streamEvents(id: string, url: URL, req: IncomingMessage, res: ServerResponse): void {
+    // Cursor precedence: explicit ?since, else the SSE auto-reconnect header
+    // (Last-Event-ID), else a FRESH connect → the active turn's `from` (rejoin the running
+    // turn from its first event) or the head (idle: only new events; completed turns come
+    // from getMessages, never replayed here → no double render).
+    const cursor = url.searchParams.get("since") ?? (req.headers["last-event-id"] as string | undefined);
+    const active = turns.get(id);
+    const sinceRaw = cursor != null && cursor !== "" ? Number(cursor) : active ? active.from : runtime.streamHead(id);
+    const since = Number.isFinite(sinceRaw) ? sinceRaw : 0;
     res.writeHead(200, {
       "content-type": "text/event-stream",
       "cache-control": "no-cache",
       connection: "keep-alive",
       ...CORS,
     });
-    // Accumulate the turn's ops-trace as it streams, so we can persist it on the
-    // assistant message — otherwise the trace (a live-only SSE artifact) is lost
-    // on reload. Mirrors exactly what the client builds from the same events.
-    const ops: TraceLine[] = [];
-    // The INTERLEAVED timeline (conversation-experience): prose/reasoning + tool rows
-    // in receipt order, persisted on the assistant message so a restored turn renders
-    // identically to the live stream (live≡reload). Built with the SAME shared fold the
-    // web client uses (`applyTimelineEvent`), so the two can't drift. `ops` stays as the
-    // flat fallback trace.
-    const timeline = emptyTimeline();
-    let settled = false; // the turn finished normally → ignore the end-of-stream close
-    let aborted = false; // the client went away mid-turn → stop writing + cancel the agent
-    const send = (event: MuEvent): void => {
-      if (aborted) return;
-      if (event.type === "tool") ops.push({ verb: event.verb, arg: event.arg, ret: event.ret });
-      else if (event.type === "canvas") ops.push(traceFromOp(event.op));
-      applyTimelineEvent(timeline, event);
-      res.write(`data: ${JSON.stringify(event)}\n\n`);
-    };
-    const unsubscribe = runtime.subscribe(id, send);
-    // Client disconnect (tab close, navigation, network drop): unsubscribe and cancel
-    // the agent turn so it stops working — and stops spending — against a dead socket.
-    res.on("close", () => {
-      if (settled || aborted) return;
-      aborted = true;
-      unsubscribe();
-      void activeDriver.abort(opencodeId);
+    res.write("retry: 1000\n\n"); // browser auto-reconnect backoff hint
+    const unsubscribe = runtime.subscribeFrom(id, since, ({ seq, event }) => {
+      if (!res.writableEnded) res.write(`id: ${seq}\ndata: ${JSON.stringify(event)}\n\n`);
     });
-    try {
-      // Re-`require` the session at each push: a canvas op during the turn replaces
-      // the stored SessionState (clone-then-commit), so a reference captured earlier
-      // goes stale and writes to it would be dropped from the store (lost on reload).
-      runtime.sessions.require(id).messages.push({ role: "user", text, at: Date.now() });
-      runtime.sessions.persist(id);
-      // inject_canvas_state: the cheap summary rides along as an extra prompt part.
-      const summary = runtime.canvasSummary(id);
-      const extraParts = [`\n\n[µ canvas state] ${JSON.stringify(summary)}`];
-      // After a reconcile re-mint, replay the prior transcript on THIS first
-      // prompt so the fresh opencode session has conversational context.
-      if (primingText) extraParts.push(`\n\n${primingText}`);
-      // Drive the BOUND opencode session (post-reconcile), not the µ id. Stream
-      // prose/reasoning tokens live: the driver's onDelta re-publishes each cumulative
-      // part on the bus (keyed by the µ id, where `send`/`subscribe` live), which `send`
-      // writes to the SSE client and folds into the interleaved `items` timeline.
-      const reply = await activeDriver.prompt(
-        opencodeId,
-        text,
-        extraParts,
-        (d) => runtime.publish(id, { type: "chat_delta", partId: d.partId, kind: d.kind, text: d.text }),
-      );
-      if (aborted) return; // client gone — don't record/publish a turn nobody is listening to
-      // Persist `items` (the interleaved timeline) alongside `text`+`ops`. text/ops are
-      // kept as the fallback for legacy renderers and for any turn that produced no items.
-      runtime.sessions.require(id).messages.push({
-        role: "assistant",
-        text: reply,
-        at: Date.now(),
-        ops: [...ops],
-        ...(timeline.items.length ? { items: [...timeline.items] } : {}),
-      });
-      runtime.sessions.persist(id);
-      runtime.publish(id, { type: "chat", role: "assistant", text: reply });
-      runtime.publish(id, { type: "done" });
-    } catch (err) {
-      if (!aborted) {
-        const code =
-          err instanceof MuErrorException ? err.code : err instanceof Error && err.name === "TurnTimeoutError" ? "TIMEOUT" : "FETCH_FAILED";
-        runtime.publish(id, { type: "error", error: { code, message: err instanceof Error ? err.message : String(err) } });
-      }
-    } finally {
-      settled = true;
-      turnsInFlight.delete(id);
+    // Keepalive so an idle stream (no turn running) isn't dropped by a proxy/timeout.
+    const keepalive = setInterval(() => {
+      if (!res.writableEnded) res.write(":ka\n\n");
+    }, 15_000);
+    res.on("close", () => {
+      clearInterval(keepalive);
       unsubscribe();
-      if (!res.writableEnded) res.end();
+    });
+  }
+
+  // --- command: cancel the in-flight turn (POST /cancel) ------------------------
+  function cancelTurn(id: string, res: ServerResponse): void {
+    const turn = turns.get(id);
+    if (turn) {
+      turn.cancelled = true;
+      void driver?.abort(turn.opencodeId);
     }
+    sendJson(res, 200, { ok: true, cancelled: Boolean(turn) });
   }
 
   await listen(httpServer, opts.port ?? 0, opts.hostname ?? "127.0.0.1");
@@ -341,14 +520,19 @@ export async function createMuServer(opts: MuServerOptions): Promise<MuServerHan
   // The driver's tools call back to this same server's /internal endpoint, presenting
   // `internalToken` as the shared secret. An injected `driverFactory` (tests) takes
   // precedence over starting opencode, so the turn pathway runs with a fake agent.
+  // (`model` was resolved + validated at the top of this function.)
   if (opts.driverFactory) {
     driver = await opts.driverFactory({ callbackUrl: url, callbackToken: internalToken, timeoutMs: opts.turnTimeoutMs });
-  } else if (opts.model) {
+  } else if (model) {
     driver = await OpencodeDriver.start({
-      model: opts.model,
+      model,
       callbackUrl: url,
       callbackToken: internalToken,
       timeoutMs: opts.turnTimeoutMs,
+      // Keep opencode's storage under `dataRoot` (overridable) so its sessions persist
+      // and resume across a `serve` restart; reconcile-on-miss stays the fallback.
+      dataHome: opts.opencodeDataHome ?? opts.dataRoot,
+      projectDir: opts.opencodeProjectDir ?? opts.dataRoot,
     });
   }
 

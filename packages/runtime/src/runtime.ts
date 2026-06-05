@@ -36,6 +36,13 @@ export type MuEvent =
   | { type: "done" }
   | { type: "error"; error: { code?: string; message: string } };
 
+/** A logged event plus the per-session monotonic sequence number the read stream
+ *  (GET /events) uses as a replay cursor — the backbone of refresh-resume + multi-device. */
+export interface SeqEvent {
+  seq: number;
+  event: MuEvent;
+}
+
 export interface MuRuntimeOptions {
   /** root dir for the broker's shared store. */
   dataRoot: string;
@@ -58,6 +65,14 @@ export interface MuRuntimeOptions {
  */
 export class MuRuntime {
   private readonly bus = new EventEmitter();
+  // Per-session durable (in-memory) event log + its monotonic seq. The log is what
+  // makes the read stream replayable: a (re)connecting client asks for everything
+  // after a cursor and catches up, so a refresh mid-turn rejoins the live turn and a
+  // second device sees the same stream. Bounded — completed turns also live in the
+  // persisted transcript (getMessages), so the log only needs the live/recent tail.
+  private readonly logs = new Map<string, SeqEvent[]>();
+  private readonly seqs = new Map<string, number>();
+  private static readonly LOG_CAP = 2000;
   readonly tools: ToolSurface;
 
   constructor(
@@ -143,6 +158,8 @@ export class MuRuntime {
   }
   deleteSession(id: string): boolean {
     this.bus.removeAllListeners(`s:${id}`);
+    this.logs.delete(id);
+    this.seqs.delete(id);
     return this.sessions.delete(id);
   }
 
@@ -233,14 +250,62 @@ export class MuRuntime {
     return this.tools.dataList(filter);
   }
 
-  // --- event bus (per session) ---
-  publish(sessionId: string, event: MuEvent): void {
-    this.bus.emit(`s:${sessionId}`, event);
+  // --- event log (per session; CQRS read stream) ---
+  /**
+   * Append an event to the session's log, stamp it with the next monotonic seq, and
+   * fan it out to live subscribers. Returns the seq. Commands (a turn) write here; the
+   * read stream (GET /events) replays + tails it — the writer never touches a socket.
+   */
+  publish(sessionId: string, event: MuEvent): number {
+    const seq = (this.seqs.get(sessionId) ?? 0) + 1;
+    this.seqs.set(sessionId, seq);
+    const log = this.logs.get(sessionId) ?? [];
+    log.push({ seq, event });
+    if (log.length > MuRuntime.LOG_CAP) log.splice(0, log.length - MuRuntime.LOG_CAP);
+    this.logs.set(sessionId, log);
+    this.bus.emit(`s:${sessionId}`, { seq, event } satisfies SeqEvent);
+    return seq;
   }
-  subscribe(sessionId: string, listener: (event: MuEvent) => void): () => void {
+
+  /** Highest seq emitted for a session (0 if none) — a fresh reader starts here to get
+   *  only live events; a turn records it at start so a reconnect can replay the turn. */
+  streamHead(sessionId: string): number {
+    return this.seqs.get(sessionId) ?? 0;
+  }
+
+  /**
+   * Subscribe from `sinceSeq` (exclusive): first replay every buffered event with a
+   * greater seq in order, then stream live. Events that land DURING replay are queued
+   * and flushed after, deduped by seq — so the reader sees a single gap-free, in-order
+   * stream with no race between catch-up and live (the property refresh-resume needs).
+   */
+  subscribeFrom(sessionId: string, sinceSeq: number, listener: (e: SeqEvent) => void): () => void {
     const channel = `s:${sessionId}`;
-    this.bus.on(channel, listener);
-    return () => this.bus.off(channel, listener);
+    let last = sinceSeq;
+    let replaying = true;
+    const queued: SeqEvent[] = [];
+    const onLive = (e: SeqEvent): void => {
+      if (replaying) queued.push(e);
+      else if (e.seq > last) {
+        last = e.seq;
+        listener(e);
+      }
+    };
+    this.bus.on(channel, onLive);
+    for (const e of this.logs.get(sessionId) ?? []) {
+      if (e.seq > last) {
+        last = e.seq;
+        listener(e);
+      }
+    }
+    replaying = false;
+    for (const e of queued) {
+      if (e.seq > last) {
+        last = e.seq;
+        listener(e);
+      }
+    }
+    return () => this.bus.off(channel, onLive);
   }
 }
 

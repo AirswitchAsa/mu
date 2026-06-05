@@ -5,6 +5,7 @@ import { fileURLToPath } from "node:url";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { createMuServer, type MuServerHandle } from "./server.js";
 import { FakeDriver } from "./fake-driver.js";
+import { runTurn } from "./test-support.js";
 
 // =============================================================================
 // GATED real-upstream suite (MU_LIVE_DATA=1). Same faked agent + real µ pathway as
@@ -18,15 +19,6 @@ import { FakeDriver } from "./fake-driver.js";
 const LIVE = Boolean(process.env["MU_LIVE_DATA"]);
 const RESOURCES_DIR = join(dirname(fileURLToPath(import.meta.url)), "../../../resources");
 const json = (url: string, init?: RequestInit) => fetch(url, init).then((r) => r.json() as Promise<Record<string, unknown>>);
-
-type SSEvent = { type: string } & Record<string, unknown>;
-async function drain(resp: Response): Promise<void> {
-  const reader = resp.body!.getReader();
-  for (;;) {
-    const { done } = await reader.read();
-    if (done) break;
-  }
-}
 
 describe.skipIf(!LIVE)("µ data plane (real providers, faked agent)", () => {
   let server: MuServerHandle;
@@ -61,11 +53,7 @@ describe.skipIf(!LIVE)("µ data plane (real providers, faked agent)", () => {
       await t.tool("canvas_create", { type: fetchArgs["shape"] === "ohlcv" ? "price_chart" : "news", handle });
       return "done";
     });
-    await drain(await fetch(`${server.url}/api/sessions/${sessionId}/message`, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ text }),
-    }));
+    await runTurn(server.url, sessionId, text); // command + drain the read stream to done
     expect(handle, "data_fetch produced a handle").toBeTruthy();
     return ((await json(`${server.url}/api/resolve?handle=${encodeURIComponent(handle)}`)) as { rows: unknown[] }).rows;
   }

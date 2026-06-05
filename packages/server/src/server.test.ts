@@ -2,11 +2,12 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import type { FetchResult } from "@mu/protocol";
 import { MuRuntime } from "@mu/runtime";
-import { createMuServer, type MuServerHandle } from "./server.js";
+import { assertAgentConfigured, createMuServer, providerKeyEnvVar, type MuServerHandle } from "./server.js";
 import { coreRenderers } from "./core-renderers.js";
+import { ensureAgentKey, runTurn } from "./test-support.js";
 
 const RESOURCES_DIR = join(dirname(fileURLToPath(import.meta.url)), "../../../resources");
 const HANDLE = "yfinance:ohlcv:AMZN:1d";
@@ -173,34 +174,43 @@ describe("µ server HTTP API (deterministic, no model)", () => {
   });
 });
 
+describe("agent config validation (fail-fast, deterministic)", () => {
+  const KEYVAR = "DEEPSEEK_API_KEY";
+  let saved: string | undefined;
+  beforeEach(() => {
+    saved = process.env[KEYVAR];
+    delete process.env[KEYVAR];
+  });
+  afterEach(() => {
+    if (saved === undefined) delete process.env[KEYVAR];
+    else process.env[KEYVAR] = saved;
+  });
+
+  it("derives the provider key env var by convention", () => {
+    expect(providerKeyEnvVar("deepseek/deepseek-chat")).toBe("DEEPSEEK_API_KEY");
+    expect(providerKeyEnvVar("openai/gpt-4o")).toBe("OPENAI_API_KEY");
+  });
+
+  it("throws when a model is set but no credential is reachable", () => {
+    expect(() => assertAgentConfigured("deepseek/deepseek-chat")).toThrow(/DEEPSEEK_API_KEY|no credential/);
+  });
+
+  it("rejects a malformed model string", () => {
+    expect(() => assertAgentConfigured("deepseek-chat")).toThrow(/provider\/model/);
+    expect(() => assertAgentConfigured("deepseek/")).toThrow(/provider\/model/);
+  });
+
+  it("passes when the provider key env var is set", () => {
+    process.env[KEYVAR] = "sk-test";
+    expect(() => assertAgentConfigured("deepseek/deepseek-chat")).not.toThrow();
+  });
+});
+
 // Full live loop: a real message drives the agent to fetch + build a window.
-const LIVE = Boolean(process.env["MU_LIVE_OPENCODE"]);
-
-type SSEvent = { type: string } & Record<string, unknown>;
-
-async function readSSE(resp: Response, timeoutMs = 90_000): Promise<SSEvent[]> {
-  const events: SSEvent[] = [];
-  const reader = resp.body!.getReader();
-  const decoder = new TextDecoder();
-  const deadline = Date.now() + timeoutMs;
-  let buf = "";
-  while (Date.now() < deadline) {
-    const { done, value } = await reader.read();
-    if (done) break;
-    buf += decoder.decode(value, { stream: true });
-    const chunks = buf.split("\n\n");
-    buf = chunks.pop() ?? "";
-    for (const c of chunks) {
-      const line = c.split("\n").find((l) => l.startsWith("data: "));
-      if (line) {
-        const evt = JSON.parse(line.slice(6)) as SSEvent;
-        events.push(evt);
-        if (evt.type === "done" || evt.type === "error") return events;
-      }
-    }
-  }
-  return events;
-}
+// µ pins opencode's data home under `dataRoot` (a temp dir here), so the model key must
+// reach the spawned `serve` via env — ensureAgentKey bridges it from the default
+// `opencode auth login` home for local runs (no-op when DEEPSEEK_API_KEY is already set).
+const LIVE = Boolean(process.env["MU_LIVE_OPENCODE"]) && ensureAgentKey();
 
 describe.skipIf(!LIVE)("µ server full loop (live DeepSeek + live Yahoo)", () => {
   let server: MuServerHandle;
@@ -217,14 +227,11 @@ describe.skipIf(!LIVE)("µ server full loop (live DeepSeek + live Yahoo)", () =>
 
   it("a user message grows the canvas: agent fetches AMZN and creates a price_chart", async () => {
     const { sessionId } = (await json(`${server.url}/api/sessions`, { method: "POST" })) as { sessionId: string };
-    const resp = await fetch(`${server.url}/api/sessions/${sessionId}/message`, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({
-        text: "Fetch AMZN daily price history with data_fetch, then create a price_chart window bound to that handle with canvas_create.",
-      }),
-    });
-    const events = await readSSE(resp);
+    const events = await runTurn(
+      server.url,
+      sessionId,
+      "Fetch AMZN daily price history with data_fetch, then create a price_chart window bound to that handle with canvas_create.",
+    );
     expect(events.some((e) => e.type === "canvas")).toBe(true);
     expect(events.at(-1)?.type).toBe("done");
 
@@ -259,12 +266,7 @@ describe.skipIf(!LIVE)("µ server full loop (live DeepSeek + live Yahoo)", () =>
   // compare. Asserts the server-authoritative manifest grows correctly and that
   // bound handles resolve to real rows.
   type Win = { id: string; type: string; spec: Record<string, unknown>; bindings: string[] };
-  const send = (sessionId: string, text: string) =>
-    fetch(`${server.url}/api/sessions/${sessionId}/message`, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ text }),
-    }).then((r) => readSSE(r, 150_000));
+  const send = (sessionId: string, text: string) => runTurn(server.url, sessionId, text);
   const canvasOf = (sessionId: string) =>
     json(`${server.url}/api/sessions/${sessionId}/canvas`) as Promise<{ windows: Win[] }>;
   const rowsOf = async (handle: string) =>

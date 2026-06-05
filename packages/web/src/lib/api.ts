@@ -7,6 +7,10 @@ import type { DataRow, MuStreamEvent } from "./types";
 // a network or a browser.
 // =============================================================================
 
+// API origin. Build-time `VITE_MU_API` wins; UNSET → dev default (Vite :5173 → API :4000);
+// set EMPTY (`VITE_MU_API=`) → same-origin relative `/api` (the single-image Docker build,
+// where the µ server serves this bundle and the API off one origin — empty isn't nullish so
+// `?? default` keeps it).
 const BASE: string =
   (import.meta.env?.VITE_MU_API as string | undefined)?.replace(/\/$/, "") ?? "http://127.0.0.1:4000";
 
@@ -85,23 +89,18 @@ export async function postUserOps(id: string, ops: CanvasOp[]): Promise<void> {
 }
 
 /**
- * Send a message and stream the turn. Calls `onEvent` for each SSE event
- * (canvas/tool/chat/done/error) as it arrives, and resolves when the turn ends.
+ * Start a turn (COMMAND). Resolves on the server's 202 ACK; the turn runs detached and
+ * its events arrive on the session's read stream ({@link openEvents}), NOT here. Throws on
+ * NO_DRIVER / BUSY / transport error so the caller can surface it. The user's prompt is
+ * echoed back as a `chat` event on the stream, so we deliberately do NOT optimistically
+ * render it here — every device (including this one) shows it from the one event source.
  */
-export async function streamMessage(
-  id: string,
-  text: string,
-  onEvent: (e: MuStreamEvent) => void,
-  signal?: AbortSignal,
-): Promise<void> {
+export async function sendMessage(id: string, text: string): Promise<void> {
   const resp = await fetch(`${BASE}/api/sessions/${id}/message`, {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify({ text }),
-    signal,
   });
-  // A non-2xx (e.g. NO_DRIVER, BUSY, server down) carries a JSON error body, not an
-  // SSE stream — surface it instead of silently "completing" with no reply.
   if (!resp.ok) {
     const detail = await resp.text().catch(() => "");
     let message = `message request failed (${resp.status})`;
@@ -113,29 +112,33 @@ export async function streamMessage(
     }
     throw new Error(message);
   }
-  if (!resp.body) throw new Error("message stream has no body");
-  const reader = resp.body.getReader();
-  const decoder = new TextDecoder();
-  let buf = "";
-  try {
-    for (;;) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      buf += decoder.decode(value, { stream: true });
-      const { events, rest } = decodeSSE(buf);
-      buf = rest;
-      for (const e of events) {
-        onEvent(e as MuStreamEvent);
-        if (e && typeof e === "object" && ((e as { type?: string }).type === "done" || (e as { type?: string }).type === "error")) {
-          return;
-        }
-      }
+}
+
+/** Stop the in-flight turn (COMMAND). Best-effort; the stream delivers the STOPPED event. */
+export async function cancelTurn(id: string): Promise<void> {
+  await fetch(`${BASE}/api/sessions/${id}/cancel`, { method: "POST" }).catch(() => undefined);
+}
+
+/**
+ * Open the session's read stream (QUERY) and call `onEvent` for each event as it lands.
+ * This is the ONLY live channel: commands ({@link sendMessage}/{@link cancelTurn}) just
+ * write to the log, and every reader tails it here. The browser's EventSource auto-
+ * reconnects carrying Last-Event-ID, so a transient drop resumes with no gap; a full page
+ * reload reconnects fresh and the server replays the in-flight turn from its start (so a
+ * refresh mid-generation rejoins it). A second device opening the same stream mirrors it.
+ * Returns a closer.
+ */
+export function openEvents(id: string, onEvent: (e: MuStreamEvent) => void): () => void {
+  const es = new EventSource(`${BASE}/api/sessions/${id}/events`);
+  es.onmessage = (m): void => {
+    try {
+      onEvent(JSON.parse(m.data) as MuStreamEvent);
+    } catch {
+      /* skip a malformed frame rather than break the stream */
     }
-  } finally {
-    // Release the connection promptly on early return / error rather than leaving
-    // it for GC.
-    await reader.cancel().catch(() => undefined);
-  }
+  };
+  // onerror is expected on reconnect cycles; EventSource retries on its own, so we let it.
+  return () => es.close();
 }
 
 /**
