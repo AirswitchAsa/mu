@@ -1,8 +1,8 @@
 import { randomUUID } from "node:crypto";
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
-import { MuErrorException, traceFromOp, type CanvasOp, type TraceLine, type TurnItem } from "@mu/protocol";
+import { MuErrorException, traceFromOp, emptyTimeline, applyTimelineEvent, type CanvasOp, type TraceLine } from "@mu/protocol";
 import { MuRuntime, buildPrimingText, type MuEvent } from "@mu/runtime";
-import { OpencodeDriver } from "@mu/opencode-plugin";
+import { OpencodeDriver, type MuDriver } from "@mu/opencode-plugin";
 import { coreRenderers } from "./core-renderers.js";
 
 export interface MuServerOptions {
@@ -16,12 +16,19 @@ export interface MuServerOptions {
   hostname?: string;
   /** Per-turn deadline (ms) for the agent; see OpencodeDriverOptions.timeoutMs. */
   turnTimeoutMs?: number;
+  /**
+   * Inject the agent driver instead of starting opencode (tests). Receives the same
+   * callback url + token the real plugin uses, so a fake can hit `/internal` exactly
+   * as the agent does — exercising the whole turn pathway with no live LLM. Takes
+   * precedence over `model`.
+   */
+  driverFactory?: (ctx: { callbackUrl: string; callbackToken: string; timeoutMs?: number }) => MuDriver | Promise<MuDriver>;
 }
 
 export interface MuServerHandle {
   url: string;
   runtime: MuRuntime;
-  driver?: OpencodeDriver;
+  driver?: MuDriver;
   /** shared secret required on the internal tool-callback endpoint. */
   internalToken: string;
   close(): Promise<void>;
@@ -73,7 +80,7 @@ export async function createMuServer(opts: MuServerOptions): Promise<MuServerHan
     resourcesDir: opts.resourcesDir,
     renderers: coreRenderers,
   });
-  let driver: OpencodeDriver | undefined;
+  let driver: MuDriver | undefined;
   // Shared secret for the opencode plugin's tool callback. Any other local process —
   // or a browser page (CORS is open) — that POSTs /internal without it is rejected,
   // so it can't drive the canvas or hammer rate-limited upstreams as if it were the agent.
@@ -104,7 +111,11 @@ export async function createMuServer(opts: MuServerOptions): Promise<MuServerHan
       }
       const { sessionID, args } = await readJson(req);
       try {
-        const ok = await runtime.handleToolCall(String(sessionID), seg[2], (args as Record<string, unknown>) ?? {});
+        // The agent runs in the opencode session, so its callbacks carry the opencode
+        // id; sessions are keyed by µ id. Translate before dispatch (no-op for the
+        // legacy 1:1 / API-only case where the two ids coincide).
+        const muId = runtime.muIdForOpencode(String(sessionID));
+        const ok = await runtime.handleToolCall(muId, seg[2], (args as Record<string, unknown>) ?? {});
         sendJson(res, 200, { ok });
       } catch (err) {
         const code = err instanceof MuErrorException ? err.code : "FETCH_FAILED";
@@ -250,35 +261,18 @@ export async function createMuServer(opts: MuServerOptions): Promise<MuServerHan
     // on reload. Mirrors exactly what the client builds from the same events.
     const ops: TraceLine[] = [];
     // The INTERLEAVED timeline (conversation-experience): prose/reasoning + tool rows
-    // in receipt order, persisted so a restored turn renders identically to the live
-    // stream (live≡reload). text/reasoning items are upserted by partId (first-seen
-    // fixes position, later deltas replace the cumulative text); a tool item is
-    // appended for each `tool`/`canvas` event — the same accumulation that feeds `ops`.
-    const items: TurnItem[] = [];
-    const itemIndexByPart = new Map<string, number>();
-    const upsertPart = (partId: string, kind: "text" | "reasoning", text: string): void => {
-      const at = itemIndexByPart.get(partId);
-      if (at === undefined) {
-        itemIndexByPart.set(partId, items.length);
-        items.push({ kind, id: partId, text });
-      } else {
-        items[at] = { kind, id: partId, text };
-      }
-    };
+    // in receipt order, persisted on the assistant message so a restored turn renders
+    // identically to the live stream (live≡reload). Built with the SAME shared fold the
+    // web client uses (`applyTimelineEvent`), so the two can't drift. `ops` stays as the
+    // flat fallback trace.
+    const timeline = emptyTimeline();
     let settled = false; // the turn finished normally → ignore the end-of-stream close
     let aborted = false; // the client went away mid-turn → stop writing + cancel the agent
     const send = (event: MuEvent): void => {
       if (aborted) return;
-      if (event.type === "tool") {
-        ops.push({ verb: event.verb, arg: event.arg, ret: event.ret });
-        items.push({ kind: "tool", verb: event.verb, arg: event.arg, ret: event.ret });
-      } else if (event.type === "canvas") {
-        const line = traceFromOp(event.op);
-        ops.push(line);
-        items.push({ kind: "tool", ...line });
-      } else if (event.type === "chat_delta") {
-        upsertPart(event.partId, event.kind, event.text);
-      }
+      if (event.type === "tool") ops.push({ verb: event.verb, arg: event.arg, ret: event.ret });
+      else if (event.type === "canvas") ops.push(traceFromOp(event.op));
+      applyTimelineEvent(timeline, event);
       res.write(`data: ${JSON.stringify(event)}\n\n`);
     };
     const unsubscribe = runtime.subscribe(id, send);
@@ -320,7 +314,7 @@ export async function createMuServer(opts: MuServerOptions): Promise<MuServerHan
         text: reply,
         at: Date.now(),
         ops: [...ops],
-        ...(items.length ? { items: [...items] } : {}),
+        ...(timeline.items.length ? { items: [...timeline.items] } : {}),
       });
       runtime.sessions.persist(id);
       runtime.publish(id, { type: "chat", role: "assistant", text: reply });
@@ -344,9 +338,12 @@ export async function createMuServer(opts: MuServerOptions): Promise<MuServerHan
   const port = typeof addr === "object" && addr ? addr.port : opts.port ?? 0;
   const url = `http://127.0.0.1:${port}`;
 
-  if (opts.model) {
-    // The plugin's tools call back to this same server's /internal endpoint, presenting
-    // `internalToken` as the shared secret.
+  // The driver's tools call back to this same server's /internal endpoint, presenting
+  // `internalToken` as the shared secret. An injected `driverFactory` (tests) takes
+  // precedence over starting opencode, so the turn pathway runs with a fake agent.
+  if (opts.driverFactory) {
+    driver = await opts.driverFactory({ callbackUrl: url, callbackToken: internalToken, timeoutMs: opts.turnTimeoutMs });
+  } else if (opts.model) {
     driver = await OpencodeDriver.start({
       model: opts.model,
       callbackUrl: url,

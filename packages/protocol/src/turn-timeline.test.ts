@@ -1,13 +1,12 @@
 import { describe, expect, it } from "vitest";
-import type { CanvasOp, CanvasState } from "@mu/protocol";
-import { buildTimeline } from "./turn-timeline";
-import type { MuStreamEvent } from "./types";
+import type { CanvasOp } from "./canvas-op.js";
+import { buildTimeline, type TimelineEventInput } from "./turn-timeline.js";
 
-// A throwaway canvas state — the timeline never reads it, only `op` matters.
-const state: CanvasState = { id: "s", windows: [], layout: {} };
-const canvas = (op: CanvasOp): MuStreamEvent => ({ type: "canvas", op, state });
+// The fold reads only `op` off a canvas event (mapped via traceFromOp), nothing else.
+const canvas = (op: CanvasOp): TimelineEventInput => ({ type: "canvas", op });
 
-describe("turn timeline merge", () => {
+// The ONE shared fold (server-persist == web-live). Each case pins a locked rule.
+describe("turn timeline fold", () => {
   it("orders parts in first-seen receipt order", () => {
     const items = buildTimeline([
       { type: "chat_delta", partId: "a", kind: "text", text: "He" },
@@ -70,7 +69,7 @@ describe("turn timeline merge", () => {
   it("ignores chat/done/error (they carry no timeline content)", () => {
     const items = buildTimeline([
       { type: "chat_delta", partId: "a", kind: "text", text: "hi" },
-      { type: "chat", role: "assistant", text: "hi" },
+      { type: "chat", role: "assistant", text: "hi" } as TimelineEventInput,
       { type: "done" },
     ]);
     expect(items).toEqual([{ kind: "text", id: "a", text: "hi" }]);

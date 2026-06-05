@@ -128,6 +128,19 @@ export class MuRuntime {
   resolveOpencodeId(id: string): string {
     return this.sessions.get(id)?.opencodeSessionId ?? id;
   }
+  /**
+   * Reverse of {@link resolveOpencodeId}: map an opencode session id back to its µ
+   * session id. The agent runs in the opencode session, so its tool callbacks carry
+   * the OPENCODE id — but sessions are keyed by µ id, so the `/internal` callback must
+   * translate before dispatch (without this, every agent tool call 404s once µ-id and
+   * opencode-id diverge). Falls through to the input for a legacy 1:1 / already-µ id.
+   */
+  muIdForOpencode(opencodeId: string): string {
+    for (const s of this.sessions.all()) {
+      if (s.opencodeSessionId === opencodeId) return s.id;
+    }
+    return opencodeId;
+  }
   deleteSession(id: string): boolean {
     this.bus.removeAllListeners(`s:${id}`);
     return this.sessions.delete(id);

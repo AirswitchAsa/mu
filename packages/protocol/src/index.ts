@@ -37,4 +37,6 @@ export type {
 } from "./indicators.js";
 export { INDICATORS, INDICATOR_BY_NAME, validateIndicators, resolveIndicatorParams } from "./indicators.js";
 export type { SessionState, CanvasState, ChatMessage, ProvenanceEntry, TurnItem } from "./session.js";
+export type { TimelineState, TimelineEventInput } from "./turn-timeline.js";
+export { emptyTimeline, applyTimelineEvent, buildTimeline } from "./turn-timeline.js";
 export type { CanvasSummary, CanvasSummaryWindow } from "./canvas-summary.js";

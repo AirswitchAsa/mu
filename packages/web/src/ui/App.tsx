@@ -1,6 +1,5 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
-import type { CanvasOp, CanvasState, ChatMessage, TurnItem } from "@mu/protocol";
-import { applyTimelineEvent, emptyTimeline } from "../lib/turn-timeline";
+import { applyTimelineEvent, emptyTimeline, type CanvasOp, type CanvasState, type ChatMessage, type TurnItem } from "@mu/protocol";
 import { handlesToResolve, reconcile } from "../lib/manifest";
 import { presetForSize } from "../lib/grid";
 import type { DataMap } from "../lib/types";

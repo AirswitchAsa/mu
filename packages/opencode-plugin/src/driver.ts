@@ -1,5 +1,6 @@
 import { createOpencodeClient, createOpencodeServer } from "@opencode-ai/sdk";
 import { getPluginPath } from "./plugin-path.js";
+import type { MuDriver, TurnDelta } from "./mu-driver.js";
 
 export interface OpencodeDriverOptions {
   /** "provider/model", e.g. "deepseek/deepseek-chat". */
@@ -75,7 +76,7 @@ function extractAssistantText(result: unknown): string {
  * executor: µ binds a µ session to an opencode session id, but re-mints a fresh
  * one (reconcile-on-miss) whenever opencode has dropped it. Ids are no longer 1:1.
  */
-export class OpencodeDriver {
+export class OpencodeDriver implements MuDriver {
   private constructor(
     private readonly server: { url: string; close(): void },
     private readonly client: ReturnType<typeof createOpencodeClient>,
@@ -199,7 +200,7 @@ export class OpencodeDriver {
     sessionId: string,
     text: string,
     extraParts: string[] = [],
-    onDelta?: (d: { partId: string; kind: "text" | "reasoning"; text: string }) => void,
+    onDelta?: (d: TurnDelta) => void,
   ): Promise<string> {
     const parts = [text, ...extraParts].map((t) => ({ type: "text" as const, text: t }));
     // Stream tokens by tailing the opencode event bus for the duration of the turn.
@@ -235,7 +236,7 @@ export class OpencodeDriver {
    */
   private streamDeltas(
     sessionId: string,
-    onDelta: (d: { partId: string; kind: "text" | "reasoning"; text: string }) => void,
+    onDelta: (d: TurnDelta) => void,
   ): { stop(): void } {
     let generator: AsyncGenerator<unknown> | undefined;
     let stopped = false;
