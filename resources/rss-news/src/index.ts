@@ -30,6 +30,17 @@ function looksLikeFeed(body: string): boolean {
   return head.includes("<rss") || head.includes("<feed") || head.includes("<item") || head.includes("<entry");
 }
 
+// --- News namespace taxonomy (carried as the handle tail[0]) -----------------
+// Three scopes the agent can request and a card can group/badge by. Encoded as
+// `provider:news:<entity>:<namespace>` so the wire's scope is part of its identity
+// (data-architecture.md §3 — the tail is a shape-specific remainder). An existing
+// handle with an empty tail still resolves: consumers treat a missing namespace as
+// the resource's default (per-ticker→ticker, general wire→market).
+export type NewsNamespace = "ticker" | "sector" | "market";
+const NAMESPACES: readonly NewsNamespace[] = ["ticker", "sector", "market"];
+const isNamespace = (v: unknown): v is NewsNamespace =>
+  typeof v === "string" && (NAMESPACES as readonly string[]).includes(v);
+
 const SUMMARY_MAX = 320;
 
 /** RSS items → canonical `news` records for `source`, tagged with `tickers`. */
@@ -65,13 +76,22 @@ interface RssSpec {
   urlFor: (entity: string) => string;
   /** the comma-joined tickers to stamp on each item (per-ticker feeds tag themselves). */
   tickersFor: (entity: string) => string;
+  /**
+   * The default namespace for this feed when the caller omits `kind` (per-ticker
+   * feeds → ticker; general wires resolve per-slug). The resolved namespace lands in
+   * the handle tail.
+   */
+  namespaceFor: (entity: string) => NewsNamespace;
 }
 
 function rssResource(spec: RssSpec, fetchText: FetchText): Resource {
   const manifest: ResourceManifest = {
     id: spec.id,
     shapes: ["news"],
-    params: [{ name: "entity", required: true, description: spec.paramDesc }],
+    params: [
+      { name: "entity", required: true, description: spec.paramDesc },
+      { name: "kind", required: false, description: "news namespace: ticker | sector | market (defaulted from the feed when omitted)" },
+    ],
     cadence: { everyMs: 5 * 60_000 },
     // no configSchema → always available (no key).
   };
@@ -82,6 +102,9 @@ function rssResource(spec: RssSpec, fetchText: FetchText): Resource {
         throw new MuErrorException("UNKNOWN_SOURCE", `${spec.id} does not produce shape '${params.shape}'`);
       }
       const entity = params.entity;
+      // An explicit `kind` wins (validated against the taxonomy); otherwise the feed's
+      // default. The resolved namespace becomes tail[0] of the handle.
+      const namespace: NewsNamespace = isNamespace(params.kind) ? params.kind : spec.namespaceFor(entity);
       const xml = await fetchText(spec.urlFor(entity));
       if (!looksLikeFeed(xml)) {
         // A non-feed body (HTML error page, redirect) returned with HTTP 200 — make the
@@ -92,15 +115,15 @@ function rssResource(spec: RssSpec, fetchText: FetchText): Resource {
       return {
         descriptor: {
           shape: "news",
-          identity: { provider: spec.id, shape: "news", entity, tail: [] },
-          queryParams: { entity },
+          identity: { provider: spec.id, shape: "news", entity, tail: [namespace] },
+          queryParams: { entity, kind: namespace },
         },
         payload,
         provenance: {
           source: spec.id,
           fetchedAt: ctx.now(),
           trigger: ctx.trigger,
-          queryParams: { entity },
+          queryParams: { entity, kind: namespace },
           upstream: { url: spec.urlFor(entity) },
         },
       };
@@ -117,6 +140,7 @@ export function createYahooNews(deps: { fetchText?: FetchText } = {}): Resource 
       paramDesc: "ticker symbol, e.g. AMZN — Yahoo Finance per-ticker headlines",
       urlFor: (e) => `https://feeds.finance.yahoo.com/rss/2.0/headline?s=${encodeURIComponent(e)}&region=US&lang=en-US`,
       tickersFor: (e) => e.toUpperCase(),
+      namespaceFor: () => "ticker", // per-ticker company headlines
     },
     deps.fetchText ?? realFetchText,
   );
@@ -138,6 +162,21 @@ const CNBC_FEEDS: Record<string, string> = {
 };
 const CNBC_SLUGS = Object.keys(CNBC_FEEDS).join("|");
 
+// CNBC slug → news namespace. The broad market/macro/finance wires are `market`;
+// the narrower verticals/themes are `sector`. (No CNBC wire is per-ticker, so none
+// map to `ticker`.) An unknown slug falls back to `top` (→ market), matching the URL
+// fallback above. This is the documented mapping for the workstream.
+const CNBC_NAMESPACE: Record<string, NewsNamespace> = {
+  top: "market",
+  markets: "market",
+  economy: "market",
+  finance: "market",
+  investing: "market",
+  business: "market",
+  technology: "sector",
+  earnings: "sector",
+};
+
 export function createCnbcNews(deps: { fetchText?: FetchText } = {}): Resource {
   return rssResource(
     {
@@ -149,6 +188,7 @@ export function createCnbcNews(deps: { fetchText?: FetchText } = {}): Resource {
         return `https://www.cnbc.com/id/${id}/device/rss/rss.html`;
       },
       tickersFor: () => "",
+      namespaceFor: (e) => CNBC_NAMESPACE[e.toLowerCase()] ?? "market",
     },
     deps.fetchText ?? realFetchText,
   );

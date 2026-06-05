@@ -39,6 +39,7 @@ describe("yahoo news resource", () => {
     const r = createYahooNews({ fetchText: async () => FEED });
     const out = await r.fetch({ shape: "news", entity: "amzn" }, ctx);
     expect(out.descriptor.identity).toMatchObject({ provider: "yahoo", shape: "news", entity: "amzn" });
+    expect(out.descriptor.identity.tail).toEqual(["ticker"]); // per-ticker → ticker namespace
     expect(out.payload).toHaveLength(1); // undated item dropped (tolerant)
     expect(out.payload[0]).toMatchObject({
       id: "g1",
@@ -57,6 +58,26 @@ describe("cnbc news resource", () => {
     expect(r.manifest.configSchema ?? []).toHaveLength(0); // no key
     const out = await r.fetch({ shape: "news", entity: "markets" }, ctx);
     expect(out.payload[0]).toMatchObject({ source: "cnbc", tickers: undefined });
+  });
+
+  it("maps broad wires → market and verticals → sector namespace (tail[0])", async () => {
+    const r = createCnbcNews({ fetchText: async () => FEED });
+    const market = await r.fetch({ shape: "news", entity: "markets" }, ctx);
+    expect(market.descriptor.identity.tail).toEqual(["market"]);
+    const economy = await r.fetch({ shape: "news", entity: "economy" }, ctx);
+    expect(economy.descriptor.identity.tail).toEqual(["market"]);
+    const tech = await r.fetch({ shape: "news", entity: "technology" }, ctx);
+    expect(tech.descriptor.identity.tail).toEqual(["sector"]);
+    const earnings = await r.fetch({ shape: "news", entity: "earnings" }, ctx);
+    expect(earnings.descriptor.identity.tail).toEqual(["sector"]);
+  });
+
+  it("an explicit valid kind overrides the feed default; an invalid one is ignored", async () => {
+    const r = createCnbcNews({ fetchText: async () => FEED });
+    const forced = await r.fetch({ shape: "news", entity: "technology", kind: "market" }, ctx);
+    expect(forced.descriptor.identity.tail).toEqual(["market"]); // explicit wins
+    const bogus = await r.fetch({ shape: "news", entity: "technology", kind: "nonsense" }, ctx);
+    expect(bogus.descriptor.identity.tail).toEqual(["sector"]); // falls back to default
   });
 
   it("rejects a non-feed (HTML error page served with HTTP 200) instead of yielding empty", async () => {

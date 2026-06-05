@@ -282,6 +282,7 @@ export function createFinnhubResource(deps: { fetchJson?: FetchJson; apiKey?: st
     params: [
       { name: "shape", required: true, description: "news | releases | key_stats" },
       { name: "entity", required: true, description: "ticker symbol, e.g. AMZN" },
+      { name: "kind", required: false, description: "news namespace (company news is always 'ticker')" },
     ],
     configSchema: ["FINNHUB_API_KEY"],
     cadence: { everyMs: 10 * 60_000 },
@@ -302,9 +303,11 @@ export function createFinnhubResource(deps: { fetchJson?: FetchJson; apiKey?: st
         const url = `https://finnhub.io/api/v1/company-news?symbol=${encodeURIComponent(entity)}&from=${from}&to=${to}&token=${token}`;
         const raw = assertOk(await fetchJson(url)) as FinnhubNews[];
         const payload = newsRecords(Array.isArray(raw) ? raw : [], entity);
+        // Finnhub company-news is per-ticker, so the namespace is always `ticker`
+        // (carried as tail[0]). `kind` is accepted for surface symmetry but ignored.
         return {
-          descriptor: { shape: "news", identity: { provider: "finnhub", shape: "news", entity, tail: [] }, queryParams: { entity } },
-          provenance: { source: "finnhub", fetchedAt: now, trigger: ctx.trigger, queryParams: { entity }, upstream: { from, to } },
+          descriptor: { shape: "news", identity: { provider: "finnhub", shape: "news", entity, tail: ["ticker"] }, queryParams: { entity, kind: "ticker" } },
+          provenance: { source: "finnhub", fetchedAt: now, trigger: ctx.trigger, queryParams: { entity, kind: "ticker" }, upstream: { from, to } },
           payload,
         };
       }

@@ -130,7 +130,7 @@ export const coreRenderers: RendererDef[] = [
       requiresShape: ["news"],
       title: "News wire",
       description:
-        "A scrolling wire of headlines (source · time · tickers) over one or more bound `news` handles. Fetch a feed with data_fetch {shape:'news', entity:<ticker>} (sources: yahoo per-ticker, finnhub per-ticker; cnbc general — entity is a feed slug like 'markets'/'top'), then bind the handle(s). Bind several to aggregate; each item is labeled with its source.",
+        "A scrolling wire of headlines (source · time · tickers) over one or more bound `news` handles. Fetch a feed with data_fetch {shape:'news', entity:<ticker>} (sources: yahoo per-ticker, finnhub per-ticker; cnbc general — entity is a feed slug like 'markets'/'top'), then bind the handle(s). Each handle carries a namespace in its tail — `ticker` (per-company), `market` (broad market/macro: cnbc top/markets/economy/finance/investing/business), or `sector` (cnbc technology/earnings); pass data_fetch {kind:…} to override, else it's defaulted per source. Bind several to aggregate; the same story carried by multiple sources is collapsed to one row (richest-metadata copy kept).",
       trust: "core",
     },
     validateSpec: validateNewsSpec,
