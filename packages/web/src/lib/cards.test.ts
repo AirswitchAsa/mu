@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { fmtValue, latestSnapshot, latestVintages, mergeNews, newsKey, nextRelease, splitTickers } from "./cards";
+import { fmtValue, latestSnapshot, latestVintages, mergeNews, newsKey, nextRelease, releaseTrails, splitTickers, vintageKey } from "./cards";
 import type { KeyStatsRow, NewsRow, ReleaseRow } from "./types";
 
 const stat = (field: string, asOf: number, group: string, value = "x"): KeyStatsRow => ({
@@ -63,6 +63,23 @@ describe("latestVintages", () => {
     const eps = out.find((r) => r.event === "AMZN-EPS")!;
     expect(eps.as_of).toBe(200); // latest vintage won
     expect(eps.actual).toBe(1.12);
+  });
+});
+
+describe("releaseTrails", () => {
+  it("groups vintages by logical release, each trail oldest→newest", () => {
+    const rows = [
+      rel("GDP", "2026 Q1", 300, 1000, { actual: 1.4, status: "revised" }),
+      rel("GDP", "2026 Q1", 100, 1000, { actual: 1.6 }),
+      rel("GDP", "2026 Q1", 200, 1000, { actual: 1.3, status: "revised" }),
+      rel("CPI", "2026-01", 50, 900, { actual: 3.1 }),
+    ];
+    const trails = releaseTrails(rows);
+    expect(trails.size).toBe(2);
+    const gdp = trails.get(vintageKey(rows[0]!))!;
+    expect(gdp.map((r) => r.as_of)).toEqual([100, 200, 300]); // oldest→newest
+    expect(gdp.map((r) => r.actual)).toEqual([1.6, 1.3, 1.4]);
+    expect(trails.get(vintageKey(rows[3]!))!).toHaveLength(1); // unrevised → single vintage
   });
 });
 

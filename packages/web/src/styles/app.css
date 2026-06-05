@@ -332,6 +332,32 @@ body.mu-is-dragging { cursor: grabbing; user-select: none; }
 .mu-reltag--revised { color: var(--warning); background: color-mix(in srgb, var(--warning), transparent 86%); }
 .mu-reltag--scheduled { color: var(--ink-soft); border-color: var(--line-strong); }
 
+/* a release with a revision history: the row is clickable and expands to its trail */
+.mu-rel__row[data-expandable] { cursor: pointer; }
+.mu-rel__row[data-open] { background: var(--mu-hover); }
+.mu-rel__revs {
+  flex: 0 0 auto; display: inline-flex; align-items: center; gap: 5px; border: 0;
+  background: transparent; cursor: pointer; font: inherit; font-family: var(--ds-font-mono);
+  font-size: 9.5px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--warning);
+  padding: 0;
+}
+.mu-rel__chev { display: inline-block; transition: transform var(--ds-motion-base); }
+.mu-rel__chev[data-open] { transform: rotate(90deg); }
+.mu-rel__trail {
+  margin-top: 6px; display: flex; flex-direction: column; gap: 1px;
+  border-left: 1px solid var(--line); padding-left: 10px;
+}
+.mu-rel__vrow {
+  display: grid; grid-template-columns: 76px 50px 1fr auto; gap: 8px; align-items: baseline;
+  font-family: var(--ds-font-mono); font-size: 10.5px; padding: 2px 0;
+}
+.mu-rel__vas { color: var(--muted); font-variant-numeric: tabular-nums; }
+.mu-rel__vtag { color: var(--ink-soft); letter-spacing: 0.06em; text-transform: uppercase; font-size: 9px; }
+.mu-rel__vval { color: var(--ink); font-variant-numeric: tabular-nums; }
+.mu-rel__vdelta { color: var(--muted); font-variant-numeric: tabular-nums; }
+.mu-rel__vdelta[data-dir="1"] { color: var(--system); }
+.mu-rel__vdelta[data-dir="-1"] { color: var(--danger); }
+
 /* ---- key stats (cross-section panel) ---------------------------------- */
 .mu-stats { flex: 1 1 auto; display: flex; flex-direction: column; min-height: 0; }
 .mu-stats__bar {

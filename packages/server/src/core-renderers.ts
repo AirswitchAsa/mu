@@ -142,7 +142,7 @@ export const coreRenderers: RendererDef[] = [
       requiresShape: ["releases"],
       title: "Release calendar (point-in-time)",
       description:
-        "Dated events with an expected-vs-actual: a point-in-time calendar over bound `releases` handles (reference period, scheduled/released/revised status, forecast vs actual numbers). Use this for anything with a RELEASE DATE and an estimate/actual — earnings EPS & revenue, macro prints. Fetch with data_fetch {shape:'releases', entity:<series-or-ticker>} (sources: finnhub earnings by ticker — emits both EPS and revenue; fred econ series e.g. GDP/CPIAUCSL/UNRATE), then bind. Bitemporal — refresh re-snapshots so a now-available actual appears as a new vintage. NOT for static/continuous facts like P/E or market cap — those go on a key_stats panel.",
+        "Dated events with an expected-vs-actual: a point-in-time calendar over bound `releases` handles (reference period, scheduled/released/revised status, forecast vs actual numbers). Use this for anything with a RELEASE DATE and an estimate/actual — earnings EPS & revenue, macro prints. Fetch with data_fetch {shape:'releases', entity:<series-or-ticker>} (sources: finnhub earnings by ticker — emits both EPS and revenue with consensus estimates; fred macro series e.g. GDP/CPIAUCSL/UNRATE — these carry the full ALFRED revision history, every estimate preserved as a vintage, but NO consensus forecast). Bitemporal: revisions are kept as vintages, so the calendar can be read 'as of' any past date and the latest print is shown by default. NOT for static/continuous facts like P/E or market cap — those go on a key_stats panel.",
       trust: "core",
     },
     validateSpec: validateReleasesSpec,

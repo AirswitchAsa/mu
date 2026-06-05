@@ -6,11 +6,22 @@ import {
 import type { FetchContext, FetchParams, Resource } from "@mu/resource-sdk";
 
 // =============================================================================
-// µ — FRED/ALFRED resource: economic `releases` (point-in-time). Each observation
-// becomes a releases row; `as_of` is the vintage (the FRED real-time start when
-// available, else fetch time), so revisions accrue as new rows — true PIT. FRED
-// carries no consensus forecast, so `forecast` is left empty (earnings via Finnhub
-// fills that lane). Keyed via FRED_API_KEY. `fetchJson` injectable for offline tests.
+// µ — FRED/ALFRED resource: economic `releases` with the FULL point-in-time
+// revision trail. FRED's plain observations endpoint returns only the *latest*
+// value per date; ALFRED (the same endpoint + real-time params) returns every
+// vintage — the value as it was first published and as each revision changed it.
+// We fetch the trail with `output_type=2` over a bounded window of recent periods
+// so a revision becomes a NEW row (later `as_of`), never an overwrite — true
+// bitemporal data the store can read "as of" any date.
+//
+// Handle contract (so other macro sources stay consistent): a macro release is
+//   <provider>:releases:<SERIES_ID>
+// and each row is { event, name, reference_period, as_of (=vintage),
+//   release_time, status (released→revised), actual, previous?, unit }. The
+// vintage axis is `as_of`; a later vintage of the same (event, reference_period)
+// is a revision. Never overwrite a vintage — emit a new row. FRED carries no
+// consensus forecast, so `forecast` is empty (earnings via Finnhub fills it).
+// Keyed via FRED_API_KEY. `fetchJson` is injectable for offline tests.
 // =============================================================================
 
 export type FetchJson = (url: string) => Promise<unknown>;
@@ -25,7 +36,16 @@ const realFetchJson: FetchJson = async (url) => {
   }
 };
 
-const DEFAULT_LIMIT = 36;
+/** How many recent reference periods to pull the full revision trail for. */
+const DEFAULT_PERIODS = 24;
+const MAX_PERIODS = 60;
+
+/** Parse the `range` param (a period count) into a clamped K. */
+function periodsOf(range: string | undefined): number {
+  const n = range ? Number.parseInt(range, 10) : NaN;
+  if (!Number.isFinite(n) || n <= 0) return DEFAULT_PERIODS;
+  return Math.min(n, MAX_PERIODS);
+}
 
 /**
  * Curated catalog: reader-friendly `name` + `unit` for the common FRED series (the
@@ -91,8 +111,15 @@ function assertOk(raw: unknown): unknown {
   return raw;
 }
 
-function cleanObs(obs: readonly FredObs[]): { o: FredObs; value: number; release: number; vintage: number }[] {
-  const out: { o: FredObs; value: number; release: number; vintage: number }[] = [];
+interface CleanObs {
+  date: string;
+  value: number;
+  release: number; // reference date as epoch-ms
+  vintage: number; // realtime_start as epoch-ms (NaN if absent)
+}
+
+function cleanObs(obs: readonly FredObs[]): CleanObs[] {
+  const out: CleanObs[] = [];
   for (const o of obs) {
     if (!o.date) continue;
     if (o.value === undefined || o.value === ".") continue; // missing observation → skip
@@ -101,34 +128,93 @@ function cleanObs(obs: readonly FredObs[]): { o: FredObs; value: number; release
     const release = Date.parse(`${o.date}T12:00:00Z`);
     if (!Number.isFinite(release)) continue;
     const vintage = o.realtime_start ? Date.parse(`${o.realtime_start}T12:00:00Z`) : NaN;
-    out.push({ o, value, release, vintage });
+    out.push({ date: o.date, value, release, vintage });
   }
   return out;
 }
 
-function releaseRecords(
-  obs: readonly FredObs[],
+/** A single value at a single vintage in a reference period's revision trail. */
+interface Vintage {
+  asOf: number; // vintage date as epoch-ms
+  value: number;
+}
+
+const VINTAGE_COL = /_(\d{8})$/; // ALFRED wide columns are "<SERIES>_YYYYMMDD"
+
+/**
+ * Parse one ALFRED `output_type=2` (wide) row into a reference period's revision
+ * trail. Each row is `{ date, <SERIES>_YYYYMMDD: value, ... }` — one column per
+ * vintage date, the value repeated until it actually changed. We keep only the
+ * vintages where the value CHANGED, which is the genuine revision trail (and makes
+ * an unrevised series collapse to a single vintage).
+ */
+function trailOf(row: Record<string, unknown>): Vintage[] {
+  const cells: Vintage[] = [];
+  for (const [k, v] of Object.entries(row)) {
+    if (k === "date") continue;
+    const m = VINTAGE_COL.exec(k);
+    if (!m || v === "." || v == null) continue;
+    const value = Number(v);
+    if (!Number.isFinite(value)) continue;
+    const d = m[1]!;
+    const asOf = Date.parse(`${d.slice(0, 4)}-${d.slice(4, 6)}-${d.slice(6, 8)}T12:00:00Z`);
+    if (!Number.isFinite(asOf)) continue;
+    cells.push({ asOf, value });
+  }
+  cells.sort((a, b) => a.asOf - b.asOf);
+  const trail: Vintage[] = [];
+  for (const c of cells) {
+    const last = trail[trail.length - 1];
+    if (!last || last.value !== c.value) trail.push(c); // drop consecutive repeats
+  }
+  return trail;
+}
+
+/**
+ * Turn the ALFRED wide vintage observations into releases rows: one row per
+ * genuine vintage, the earliest "released" and every revision "revised".
+ * `previous` is the prior period's current (latest-vintage) value.
+ */
+function vintageRecords(
+  obs: readonly Record<string, unknown>[],
   id: string,
-  asOfNow: number,
   name: string,
   unit: string | undefined,
 ): Record<string, unknown>[] {
-  // FRED returns newest-first (sort_order=desc), so the *next* clean entry is the
-  // chronologically prior period — exactly the "previous" print.
-  const clean = cleanObs(obs);
-  return clean.map((c, i) => ({
-    event: id,
-    name,
-    reference_period: c.o.date,
-    as_of: Number.isFinite(c.vintage) ? c.vintage : asOfNow,
-    release_time: c.release,
-    status: "released",
-    forecast: undefined,
-    actual: c.value,
-    previous: clean[i + 1]?.value,
-    unit,
-    importance: "med",
-  }));
+  const byPeriod = new Map<string, Vintage[]>();
+  for (const row of obs) {
+    const date = row["date"];
+    if (typeof date !== "string") continue;
+    const trail = trailOf(row);
+    if (trail.length) byPeriod.set(date, trail);
+  }
+
+  const periodsAsc = [...byPeriod.keys()].sort((a, b) => Date.parse(a) - Date.parse(b));
+  const latestVal = new Map<string, number>();
+  for (const [k, trail] of byPeriod) latestVal.set(k, trail[trail.length - 1]!.value);
+  const prevOf = new Map<string, number | undefined>();
+  periodsAsc.forEach((k, i) => prevOf.set(k, i > 0 ? latestVal.get(periodsAsc[i - 1]!) : undefined));
+
+  const out: Record<string, unknown>[] = [];
+  for (const [k, trail] of byPeriod) {
+    const release = Date.parse(`${k}T12:00:00Z`);
+    trail.forEach((t, idx) => {
+      out.push({
+        event: id,
+        name,
+        reference_period: k,
+        as_of: t.asOf,
+        release_time: release,
+        status: idx === 0 ? "released" : "revised",
+        forecast: undefined,
+        actual: t.value,
+        previous: prevOf.get(k),
+        unit,
+        importance: "med",
+      });
+    });
+  }
+  return out;
 }
 
 export function createFredResource(deps: { fetchJson?: FetchJson; apiKey?: string } = {}): Resource {
@@ -148,7 +234,13 @@ export function createFredResource(deps: { fetchJson?: FetchJson; apiKey?: strin
           "T10Y2Y, T10YIE, MORTGAGE30US, INDPRO, RSAFS, HOUST, M2SL, UMCSENT, WALCL. " +
           "Any other FRED series id also works (auto-named from FRED metadata).",
       },
-      { name: "range", required: false, description: "ignored; latest observations are returned" },
+      {
+        name: "range",
+        required: false,
+        description:
+          "number of recent reference periods to fetch, each with its full ALFRED " +
+          `revision trail (default ${DEFAULT_PERIODS}, max ${MAX_PERIODS}).`,
+      },
     ],
     configSchema: ["FRED_API_KEY"],
     cadence: { everyMs: 6 * 60 * 60_000 },
@@ -166,34 +258,52 @@ export function createFredResource(deps: { fetchJson?: FetchJson; apiKey?: strin
       const series = params.entity;
       const id = series.toUpperCase();
       const enc = encodeURIComponent(series);
-      const obsUrl =
-        `https://api.stlouisfed.org/fred/series/observations?series_id=${enc}` +
-        `&api_key=${token}&file_type=json&sort_order=desc&limit=${DEFAULT_LIMIT}`;
-      const metaUrl = `https://api.stlouisfed.org/fred/series?series_id=${enc}&api_key=${token}&file_type=json`;
+      const k = periodsOf(params.range);
 
-      // Observations are required; series metadata is best-effort (names/units fallback).
-      const [obsRaw, metaRaw] = await Promise.all([
-        fetchJson(obsUrl),
+      const obsBase = `https://api.stlouisfed.org/fred/series/observations?series_id=${enc}&api_key=${token}&file_type=json`;
+      // Round 1: the latest K observations (to bound the window) + best-effort metadata.
+      const latestUrl = `${obsBase}&sort_order=desc&limit=${k}&output_type=1`;
+      const metaUrl = `https://api.stlouisfed.org/fred/series?series_id=${enc}&api_key=${token}&file_type=json`;
+      const [latestRaw, metaRaw] = await Promise.all([
+        fetchJson(latestUrl),
         fetchJson(metaUrl).catch(() => undefined),
       ]);
-      assertOk(obsRaw);
-      const observations = (obsRaw as { observations?: FredObs[] })?.observations ?? [];
-      const meta = (metaRaw as { seriess?: FredSeriesMeta[] } | undefined)?.seriess?.[0];
+      assertOk(latestRaw);
 
       const curated = CATALOG[id];
+      const meta = (metaRaw as { seriess?: FredSeriesMeta[] } | undefined)?.seriess?.[0];
       const name = curated?.name ?? (meta?.title && meta.title.trim()) ?? id;
       const unit = curated?.unit ?? meta?.units_short ?? meta?.units ?? undefined;
 
-      const payload = releaseRecords(observations, id, ctx.now(), name, unit);
-      return {
-        descriptor: {
-          shape: "releases",
-          identity: { provider: "fred", shape: "releases", entity: series, tail: [] },
-          queryParams: { entity: series },
-        },
-        provenance: { source: "fred", fetchedAt: ctx.now(), trigger: ctx.trigger, queryParams: { entity: series } },
-        payload,
+      const descriptor = {
+        shape: "releases" as const,
+        identity: { provider: "fred", shape: "releases", entity: series, tail: [] },
+        queryParams: { entity: series, range: String(k) },
       };
+      const provenance = {
+        source: "fred",
+        fetchedAt: ctx.now(),
+        trigger: ctx.trigger,
+        queryParams: { entity: series, range: String(k) },
+      };
+
+      const latest = cleanObs((latestRaw as { observations?: FredObs[] })?.observations ?? []);
+      if (latest.length === 0) return { descriptor, provenance, payload: [] };
+      // latest is newest-first; the oldest of the K is our observation_start window edge.
+      const windowStart = latest[latest.length - 1]!.date;
+
+      // Round 2: the full revision trail for the K periods (ALFRED wide pivot,
+      // output_type=2). realtime_start = windowStart bounds the vintage columns to
+      // the relevant span — capturing each period's first print without tripping
+      // FRED's 2000-vintage-date cap on long daily series.
+      const vintageUrl =
+        `${obsBase}&observation_start=${windowStart}&output_type=2` +
+        `&realtime_start=${windowStart}&sort_order=asc`;
+      const vintageRaw = assertOk(await fetchJson(vintageUrl));
+      const vintages = (vintageRaw as { observations?: Record<string, unknown>[] })?.observations ?? [];
+
+      const payload = vintageRecords(vintages, id, name, unit);
+      return { descriptor, provenance, payload };
     },
   };
 }

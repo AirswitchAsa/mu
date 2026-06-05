@@ -79,19 +79,24 @@ describe("news — event-list merge (upsert by id)", () => {
 describe("releases — point-in-time (bitemporal) merge", () => {
   const event = { event: "AMZN-EPS", name: "Amazon EPS", reference_period: "2026 Q1", release_time: T + 10 * DAY };
 
-  it("default read collapses to the latest vintage per logical row; older vintages are retained", async () => {
+  it("default read returns the full vintage trail; an as-of read collapses to the latest per row", async () => {
     // vintage 1: only a forecast is known (scheduled).
     await broker.ingest(releasesFetch([{ ...event, as_of: T, status: "scheduled", forecast: 0.98 }]));
     // vintage 2: the actual prints (released) — same logical row, later as_of.
     const { handle } = await broker.ingest(
       releasesFetch([{ ...event, as_of: T + 11 * DAY, status: "released", forecast: 0.98, actual: 1.12 }]),
     );
-    // no slice → the *current* view: one row per logical release, the latest vintage.
-    const current = await broker.resolve(handle);
+    // no slice → the full trail: every vintage retained as its own row.
+    const all = await broker.resolve(handle);
+    expect(all).toHaveLength(2);
+    const byAsOf = Object.fromEntries(all.map((r) => [r.as_of, r.status]));
+    expect(byAsOf[T]).toBe("scheduled");
+    expect(byAsOf[T + 11 * DAY]).toBe("released");
+    // an explicit as-of collapses to the latest vintage on/before the cutoff.
+    const current = await broker.resolve(handle, { asOf: String(T + 20 * DAY) });
     expect(current).toHaveLength(1);
     expect(current[0]!.status).toBe("released");
     expect(current[0]!.actual).toBe(1.12);
-    // the earlier vintage is still on disk — provable via an as-of read before the revision.
     const early = await broker.resolve(handle, { asOf: String(T + DAY) });
     expect(early).toHaveLength(1);
     expect(early[0]!.status).toBe("scheduled");
@@ -148,7 +153,7 @@ describe("releases — point-in-time (bitemporal) merge", () => {
 });
 
 describe("key_stats — cross-section (accumulating snapshot) merge", () => {
-  it("default read is the latest vintage per field; older vintages retained; re-snapshot idempotent", async () => {
+  it("default read returns all vintages; as-of collapses to latest per field; re-snapshot idempotent", async () => {
     // vintage 1: two fields.
     await broker.ingest(
       keyStatsFetch([
@@ -163,8 +168,10 @@ describe("key_stats — cross-section (accumulating snapshot) merge", () => {
         { field: "sector", label: "Sector", value: "Retail", as_of: T + DAY, group: "profile" },
       ]),
     );
-    // no slice → current view: one row per field (the latest vintage), not all 4 rows.
-    const current = await broker.resolve(handle);
+    // no slice → the full trail: all 4 vintages.
+    expect(await broker.resolve(handle)).toHaveLength(4);
+    // an as-of read collapses to one row per field (the latest vintage on/before the cutoff).
+    const current = await broker.resolve(handle, { asOf: String(T + 10 * DAY) });
     expect(current).toHaveLength(2);
     expect(current.find((r) => r.field === "peTTM")!.value).toBe("42.00");
     // older vintage retained: an as-of read before the revision returns the old value.
@@ -175,9 +182,9 @@ describe("key_stats — cross-section (accumulating snapshot) merge", () => {
     await broker.ingest(
       keyStatsFetch([{ field: "peTTM", label: "P/E (TTM)", value: "42.50", as_of: T + DAY, group: "valuation" }]),
     );
-    const after = await broker.resolve(handle);
-    expect(after).toHaveLength(2);
-    expect(after.find((r) => r.field === "peTTM")!.value).toBe("42.50"); // incoming won
+    expect(await broker.resolve(handle)).toHaveLength(4); // upsert, not append
+    const afterCurrent = await broker.resolve(handle, { asOf: String(T + 10 * DAY) });
+    expect(afterCurrent.find((r) => r.field === "peTTM")!.value).toBe("42.50"); // incoming won
   });
 
   it("the as-of read returns, per field, the latest vintage on/before a cutoff", async () => {
