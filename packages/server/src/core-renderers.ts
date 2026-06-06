@@ -73,6 +73,15 @@ export function validateKeyStatsSpec(spec: Record<string, unknown>): ValidationR
 }
 
 /**
+ * positions spec — a brokerage holdings table over a bound `positions` handle. Optional
+ * `scope` labels the table; presentation only (latest snapshot, sorted, totals row).
+ */
+export function validatePositionsSpec(spec: Record<string, unknown>): ValidationResult {
+  if (spec["scope"] !== undefined && typeof spec["scope"] !== "string") return fail("scope", "must be a string");
+  return OK;
+}
+
+/**
  * grid spec — a cross-sectional data table. For `options_chain` it is the calls │
  * strike │ puts ladder; `expiry` selects the slice, `heat` the heat-shaded metric.
  */
@@ -208,6 +217,18 @@ export const coreRenderers: RendererDef[] = [
       trust: "core",
     },
     validateSpec: validateKeyStatsSpec,
+  },
+  {
+    manifest: {
+      type: "positions",
+      specSchema: { scope: "string — optional label for the table" },
+      requiresShape: ["positions"],
+      title: "Portfolio holdings",
+      description:
+        "Your brokerage account's open positions as a table — symbol · qty · avg cost · last · market value · open P/L ($ and %) · day %, P/L-colored, with a totals row. This is the personal-account READ plane. Fetch with data_fetch {source:'alpaca', shape:'positions', entity:'portfolio'} then bind the handle (the entity is the account, not a ticker — always 'portfolio'). For the ACCOUNT BALANCES (equity, cash, buying power, day P/L) add a `key_stats` card bound to data_fetch {source:'alpaca', shape:'key_stats', entity:'portfolio'}. For the EQUITY CURVE (portfolio return over time) add a `compare` card bound to data_fetch {source:'alpaca', shape:'ohlcv', entity:'portfolio'} — it draws as an index-normalized return line. A full portfolio dashboard is those three cards side by side. Single-operator: one account per deployment. Refresh re-snapshots (a closed position drops out).",
+      trust: "core",
+    },
+    validateSpec: validatePositionsSpec,
   },
   {
     manifest: {

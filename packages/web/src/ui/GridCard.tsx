@@ -4,12 +4,13 @@ import { lastClose, pctChange } from "../lib/indicators";
 import { presetForSize, SIZE_LABELS, sizeIndexOf, MAX_SIZE } from "../lib/grid";
 import { mergeNews } from "../lib/cards";
 import { compareBase, symbolOf } from "../lib/specs";
-import type { DataMap, KeyStatsRow, NewsRow, OhlcvRow, ReleaseRow } from "../lib/types";
+import type { DataMap, KeyStatsRow, NewsRow, OhlcvRow, PositionsRow, ReleaseRow } from "../lib/types";
 import { getRenderer } from "../renderers/registry";
 import type { RenderContext, RendererInstance, RenderTheme } from "../renderers/types";
 import { NewsCard } from "./cards/News";
 import { ReleasesCard } from "./cards/Releases";
 import { KeyStatsCard } from "./cards/KeyStats";
+import { PositionsCard } from "./cards/Positions";
 
 // =============================================================================
 // µ — a grid card: a drag-handle bar (grip · title · handle · sizer · close) over
@@ -124,6 +125,10 @@ function CardBody(props: {
   if (win.type === "key_stats") {
     const rows = win.bindings.flatMap((h) => (data.get(h) ?? []) as unknown as KeyStatsRow[]);
     return <KeyStatsCard rows={rows} now={Date.now()} />;
+  }
+  if (win.type === "positions") {
+    const rows = win.bindings.flatMap((h) => (data.get(h) ?? []) as unknown as PositionsRow[]);
+    return <PositionsCard rows={rows} now={Date.now()} />;
   }
   const isChart = win.type === "price_chart" || win.type === "compare";
   return (

@@ -53,6 +53,22 @@ export interface KeyStatsRow {
   group?: string;
 }
 
+/** A resolved `positions` row — one open brokerage holding of a vintage (epoch-ms `as_of`). */
+export interface PositionsRow {
+  symbol: string;
+  qty: number;
+  side: string;
+  avg_entry: number;
+  price: number;
+  market_value: number;
+  cost_basis: number;
+  unrealized_pl: number;
+  unrealized_plpc: number;
+  change_today: number;
+  asset_class?: string;
+  as_of: number;
+}
+
 /**
  * Lightweight Charts datum shapes — `time` is epoch-SECONDS (we divide ms by 1000).
  * Kept as a plain `number` so the pure indicator tests stay value-based; renderers
@@ -81,7 +97,10 @@ export interface HistDatum {
  * event carries the FULL server-authoritative manifest the client reconciles.
  */
 export type MuStreamEvent =
-  | { type: "canvas"; op: CanvasOp; state: CanvasState }
+  // `source` is "agent" for agent ops (drive the chat timeline + "thinking") and "user"
+  // for layout ops (resize/reorder/delete — sync the canvas only). Optional for tolerance
+  // of an older server; treated as "agent" when absent.
+  | { type: "canvas"; op: CanvasOp; state: CanvasState; source?: "agent" | "user" }
   | { type: "tool"; verb: string; arg: string; ret: string }
   // Cumulative token-stream delta for one assistant part (prose or reasoning).
   // `text` is the FULL part text so far → upsert by `partId`, don't concatenate.

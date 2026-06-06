@@ -144,6 +144,39 @@ macro levels, and simple single-number fundamentals — they differ by *identity
 
 ---
 
+## `positions` — brokerage holdings (cross-section) *(built)*
+
+- **window:** `positions` table (holdings). The account **balances** ride the existing `key_stats`
+  panel; the **equity curve** rides `ohlcv` + the `compare` card — only the holdings table is a new
+  primitive.
+- **kind:** `cross-section` (accumulating snapshot — the `key_stats` pattern)
+- **record (one row = one open position):**
+  `{ symbol, qty, side /* long|short */, avg_entry, price, market_value, cost_basis, unrealized_pl, unrealized_plpc, change_today, asset_class, as_of }`
+  - `price` is the latest mark, `avg_entry` the per-share cost basis; `unrealized_pl` is the open $
+    P/L and `unrealized_plpc` its fraction; `change_today` the position's day return (fraction).
+    `as_of` is the snapshot vintage (epoch-ms).
+  - `symbol` is the within-snapshot row identity (the merge `idKey`).
+- **identity:** `provider : positions : entity` — e.g. `alpaca:positions:PORTFOLIO`. The entity is the
+  **account/portfolio**, *not* a ticker — a brokerage handle is per-account, not per-instrument. `as_of`
+  is a **column, not** in the handle (vintages accumulate under one stable handle, like `key_stats`).
+- **query params:** `entity` (the account label; one account per key in single-operator v0)
+- **merge key:** `(as_of, symbol)` — a re-snapshot upserts a holding within its vintage; a new `as_of`
+  adds a vintage; the card shows the newest `as_of` (a closed position simply drops out of the next
+  snapshot).
+- **storage:** year-partitioned parquet (by `as_of`), every vintage kept.
+- **what belongs here:** **personal account holdings** — what you own right now, with mark / cost /
+  P-L. Source: **Alpaca** (`/v2/positions`). The account **balances** (equity, cash, buying power, day
+  P/L) are *scalars*, so they ride the existing `key_stats` panel (`alpaca:key_stats:PORTFOLIO`); the
+  **equity curve** is a *time path*, so it rides `ohlcv` (`/v2/account/portfolio/history`, `close =
+  equity`) drawn by the `compare` card (`alpaca:ohlcv:PORTFOLIO` → an index-normalized return line).
+  One broker resource, three shapes.
+  - **Credentials are per-user** (`ALPACA_API_KEY_ID` / `ALPACA_API_SECRET`), held server-side like any
+    keyed resource. In **single-operator v0** that is one account per deployment (the env keys);
+    multi-user credential management is later work. This is the read/data plane — *displaying* the
+    account; *controlling* it (placing orders) is a separate MCP control plane, deferred.
+
+---
+
 ## Card ↔ shape map (the binding contract)
 
 A renderer binds to a **shape, never a provider**. The agent picks the card by the *question*,
@@ -159,13 +192,17 @@ renderer's `description` for `renderer_list`):
 | `key_stats` | `key_stats` | "what *is* this company right now?" | finnhub |
 | `grid` | `options_chain` (and other cross-sections) | "the full options board — calls │ strike │ puts" | orats |
 | `curve` | `options_chain` (projection) | "IV smile / skew · term structure" | orats |
+| `positions` | `positions` | "what do I hold right now?" (brokerage account) | alpaca |
+| `key_stats` | `key_stats` | "…and the account balances?" (equity, cash, buying power, day P/L) | alpaca, finnhub |
+| `compare` | `ohlcv` | "…and the equity curve?" (portfolio return over time) | alpaca, yahoo |
 | `memo` | — | agent-authored prose, no data | — |
 
 **Routing rule:** a fact with a *release date and an expected/actual* → `releases`; a
 *continuously-moving or static descriptive* fact → `key_stats`; a *time path you want to chart* →
 `series` (ohlcv today); a *cross-sectional table* (an options board, a stats matrix) → `grid`; a
-*cross-sectional curve* (a smile, a term structure, a yield curve) → `curve`. This is what keeps P/E
-out of the calendar and EPS out of the stats panel.
+*cross-sectional curve* (a smile, a term structure, a yield curve) → `curve`; a *personal account
+snapshot* (your holdings) → `positions` (with balances on `key_stats` and the equity curve on
+`compare`). This is what keeps P/E out of the calendar and EPS out of the stats panel.
 
 > **Options scalars** (ATM IV, 25Δ skew, IV rank) are *static point-in-time numbers*, so they ride
 > the existing `key_stats` panel — no new primitive. IV rank additionally needs an IV history, so it

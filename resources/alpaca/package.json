@@ -1,0 +1,26 @@
+{
+  "name": "@mu-resource/alpaca",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "First-party µ resource: Alpaca — brokerage portfolio (positions holdings, account balances as key_stats, equity curve as ohlcv). Keyed (ALPACA_API_KEY_ID/ALPACA_API_SECRET).",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "types": "./dist/index.d.ts",
+  "main": "./dist/index.js",
+  "mu": {
+    "kind": "resource"
+  },
+  "files": ["dist"],
+  "scripts": {
+    "build": "tsc --build"
+  },
+  "dependencies": {
+    "@mu/protocol": "workspace:*",
+    "@mu/resource-sdk": "workspace:*"
+  }
+}

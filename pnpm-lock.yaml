@@ -108,6 +108,15 @@ importers:
         specifier: ^6.0.7
         version: 6.4.3(@types/node@22.19.19)(yaml@2.9.0)
 
+  resources/alpaca:
+    dependencies:
+      '@mu/protocol':
+        specifier: workspace:*
+        version: link:../../packages/protocol
+      '@mu/resource-sdk':
+        specifier: workspace:*
+        version: link:../../packages/resource-sdk
+
   resources/finnhub:
     dependencies:
       '@mu/protocol':

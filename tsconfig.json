@@ -11,6 +11,7 @@
     { "path": "resources/rss-news" },
     { "path": "resources/finnhub" },
     { "path": "resources/fred" },
-    { "path": "resources/orats" }
+    { "path": "resources/orats" },
+    { "path": "resources/alpaca" }
   ]
 }

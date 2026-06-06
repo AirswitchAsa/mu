@@ -5,6 +5,7 @@ import {
   type CanvasOp,
   type CanvasState,
   type CanvasSummary,
+  type Emitter,
   type Handle,
   type SessionState,
   type ViewResult,
@@ -22,8 +23,9 @@ export type MuEvent =
   // The canvas is server-authoritative: every change ships the FULL manifest
   // (canvas state). The client diffs it against what it renders and patches —
   // no per-update round trip, no client-side op replay. `op` rides along only as
-  // a hint for the chat ops-trace.
-  | { type: "canvas"; op: CanvasOp; state: CanvasState }
+  // a hint for the chat ops-trace. `source` distinguishes agent ops (drive the chat
+  // timeline + "thinking") from user layout ops (resize/reorder/delete — sync only).
+  | { type: "canvas"; op: CanvasOp; state: CanvasState; source: Emitter }
   // A data verb the agent ran this turn — surfaced for the ops-trace, never bulk.
   | { type: "tool"; verb: string; arg: string; ret: string }
   // Incremental prose/reasoning as the agent writes it (WS1 streaming). `text` is the
@@ -91,7 +93,7 @@ export class MuRuntime {
       sessions,
       onCanvasChange: (sid, change) =>
         // state is already committed (sessions.replace ran before this fires).
-        this.publish(sid, { type: "canvas", op: change.op, state: this.getCanvasState(sid) }),
+        this.publish(sid, { type: "canvas", op: change.op, state: this.getCanvasState(sid), source: change.source }),
     });
   }
 

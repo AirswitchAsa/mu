@@ -20,6 +20,7 @@ function mockResource(
   id: string,
   opts: {
     shapes?: string[];
+    explicitOnlyShapes?: string[];
     configSchema?: string[];
     configured?: boolean;
     fetchImpl?: (p: FetchParams, c: FetchContext) => Promise<FetchResult>;
@@ -29,6 +30,7 @@ function mockResource(
     manifest: {
       id,
       shapes: opts.shapes ?? ["ohlcv"],
+      explicitOnlyShapes: opts.explicitOnlyShapes,
       params: [{ name: "entity", required: true }],
       configSchema: opts.configSchema,
     },
@@ -92,6 +94,26 @@ describe("ResourceRegistry resolveProvider", () => {
     expect(() => reg.resolveProvider("news", "AMZN")).toThrow(
       expect.objectContaining({ code: "UNKNOWN_SOURCE" }),
     );
+  });
+
+  it("skips an explicit-only producer in the default pick but still routes it by name", () => {
+    const reg = new ResourceRegistry();
+    // alpaca registers FIRST and is configured (available), but `ohlcv` is account-scoped
+    // for it (the portfolio equity curve) — so it opts out of the unspecified default.
+    reg.register(mockResource("alpaca", { shapes: ["ohlcv", "positions"], explicitOnlyShapes: ["ohlcv"], configSchema: ["apiKey"], configured: true }));
+    reg.register(mockResource("yfinance", { shapes: ["ohlcv"] }));
+    // default ohlcv → yfinance, NOT alpaca, even though alpaca is first + available
+    expect(reg.resolveProvider("ohlcv", "AMZN").manifest.id).toBe("yfinance");
+    // …but naming alpaca explicitly still works (the portfolio path)
+    expect(reg.resolveProvider("ohlcv", "PORTFOLIO", "alpaca").manifest.id).toBe("alpaca");
+    // …and a shape it is the sole producer of still defaults to it
+    expect(reg.resolveProvider("positions", "PORTFOLIO").manifest.id).toBe("alpaca");
+  });
+
+  it("errors when a shape is produced only by explicit-only (account-scoped) sources", () => {
+    const reg = new ResourceRegistry();
+    reg.register(mockResource("alpaca", { shapes: ["ohlcv"], explicitOnlyShapes: ["ohlcv"], configSchema: ["apiKey"], configured: true }));
+    expect(() => reg.resolveProvider("ohlcv", "AMZN")).toThrow(expect.objectContaining({ code: "UNKNOWN_SOURCE" }));
   });
 
   it("rejects duplicate registration", () => {

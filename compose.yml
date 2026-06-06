@@ -1,0 +1,25 @@
+# µ — run the whole stack (web + API + agent) with one command.
+#
+#   1. cp .env.example .env      # then edit .env: set MU_MODEL + your provider key
+#   2. docker compose up         # add -d to run detached
+#   3. open http://localhost:4000
+#
+# Pulls the published image by default. To build from this checkout instead,
+# comment out `image:` and uncomment `build: .`.
+# Without a .env it still starts in API-only mode (no agent, keyless data sources).
+
+services:
+  mu:
+    image: docker.io/spicadust/mu:latest
+    # build: .
+    ports:
+      - "4000:4000"
+    env_file:
+      - path: .env
+        required: false
+    volumes:
+      - mu-data:/data
+    restart: unless-stopped
+
+volumes:
+  mu-data:

@@ -384,6 +384,44 @@ body.mu-is-dragging { cursor: grabbing; user-select: none; }
 }
 /* (scrollbar styling is unified in the scrollbars section below) */
 
+/* ---- holdings (positions table) --------------------------------------- */
+.mu-holdings { flex: 1 1 auto; display: flex; flex-direction: column; min-height: 0; }
+.mu-holdings__bar {
+  flex: 0 0 auto; display: flex; align-items: center; justify-content: space-between; gap: 10px;
+  padding: 4px 12px 8px;
+}
+.mu-holdings__bar .ds-spec { white-space: nowrap; }
+.mu-holdings__updated { color: var(--muted); }
+.mu-holdings__empty { padding: 12px; color: var(--muted); }
+.mu-holdings__scroll { flex: 1 1 auto; overflow: auto; min-height: 0; }
+.mu-holdings__table {
+  width: 100%; border-collapse: collapse;
+  font-family: var(--ds-font-mono); font-size: 11.5px; font-variant-numeric: tabular-nums;
+}
+.mu-holdings__table thead th {
+  position: sticky; top: 0; z-index: 1; background: var(--paper); color: var(--muted);
+  font-weight: 500; letter-spacing: 0.03em; text-align: right;
+  padding: 4px 12px 5px; border-bottom: 1px solid var(--line-strong);
+}
+.mu-holdings__table th.mu-holdings__sym { text-align: left; }
+.mu-holdings__table td {
+  padding: 5px 12px; text-align: right; color: var(--ink); white-space: nowrap;
+}
+.mu-holdings__table td.mu-holdings__sym { text-align: left; font-weight: 600; color: var(--ink); }
+.mu-holdings__table tbody tr { transition: background var(--ds-motion-fast); }
+.mu-holdings__table tbody tr:hover td { background: var(--mu-hover); }
+.mu-holdings__short {
+  margin-left: 6px; padding: 0 4px; border-radius: var(--ds-radius-sm);
+  background: var(--danger); color: var(--paper); font-size: 8.5px; text-transform: uppercase;
+}
+.mu-holdings__pl[data-dir="up"] { color: var(--system); }
+.mu-holdings__pl[data-dir="down"] { color: var(--danger); }
+.mu-holdings__pl[data-dir="flat"] { color: var(--muted); }
+.mu-holdings__table tfoot td {
+  padding: 6px 12px; border-top: 1px solid var(--line-strong);
+  font-weight: 600; color: var(--ink); background: var(--paper-soft);
+}
+
 /* ---- chat ------------------------------------------------------------- */
 .mu-chat {
   flex: 0 0 auto; display: flex; flex-direction: column; min-height: 0;
@@ -530,7 +568,7 @@ body.mu-is-dragging { cursor: grabbing; user-select: none; }
    transition. Cards reveal on :hover / :focus-within. (The CANVAS .mu-grid has
    NO scrollbar at all — it still scrolls, just without a bar; see below.) ----- */
 .mu-chat__stream, .mu-news__list, .mu-rel__list,
-.mu-stats__list, .mu-memo, .mu-prose pre {
+.mu-stats__list, .mu-holdings__scroll, .mu-memo, .mu-prose pre {
   scrollbar-width: thin; scrollbar-color: transparent transparent; /* Firefox: hidden at rest */
 }
 /* Firefox reveal: cards on hover/focus */
@@ -538,21 +576,22 @@ body.mu-is-dragging { cursor: grabbing; user-select: none; }
 .mu-news__list:hover, .mu-news__list:focus-within,
 .mu-rel__list:hover, .mu-rel__list:focus-within,
 .mu-stats__list:hover, .mu-stats__list:focus-within,
+.mu-holdings__scroll:hover, .mu-holdings__scroll:focus-within,
 .mu-memo:hover, .mu-memo:focus-within,
 .mu-prose pre:hover { scrollbar-color: var(--line-strong) transparent; }
 
 .mu-chat__stream::-webkit-scrollbar,
 .mu-news__list::-webkit-scrollbar, .mu-rel__list::-webkit-scrollbar,
-.mu-stats__list::-webkit-scrollbar, .mu-memo::-webkit-scrollbar,
+.mu-stats__list::-webkit-scrollbar, .mu-holdings__scroll::-webkit-scrollbar, .mu-memo::-webkit-scrollbar,
 .mu-prose pre::-webkit-scrollbar { width: 10px; height: 10px; }
 .mu-chat__stream::-webkit-scrollbar-track,
 .mu-news__list::-webkit-scrollbar-track, .mu-rel__list::-webkit-scrollbar-track,
-.mu-stats__list::-webkit-scrollbar-track, .mu-memo::-webkit-scrollbar-track,
+.mu-stats__list::-webkit-scrollbar-track, .mu-holdings__scroll::-webkit-scrollbar-track, .mu-memo::-webkit-scrollbar-track,
 .mu-prose pre::-webkit-scrollbar-track { background: transparent; }
 /* thumb invisible at rest (gutter stays reserved → no layout shift), soft fade */
 .mu-chat__stream::-webkit-scrollbar-thumb,
 .mu-news__list::-webkit-scrollbar-thumb, .mu-rel__list::-webkit-scrollbar-thumb,
-.mu-stats__list::-webkit-scrollbar-thumb, .mu-memo::-webkit-scrollbar-thumb,
+.mu-stats__list::-webkit-scrollbar-thumb, .mu-holdings__scroll::-webkit-scrollbar-thumb, .mu-memo::-webkit-scrollbar-thumb,
 .mu-prose pre::-webkit-scrollbar-thumb {
   background: transparent; border: 3px solid transparent; background-clip: padding-box; border-radius: 999px;
   transition: background-color var(--ds-motion-base) var(--ds-ease-standard);
@@ -562,12 +601,13 @@ body.mu-is-dragging { cursor: grabbing; user-select: none; }
 .mu-news__list:hover::-webkit-scrollbar-thumb, .mu-news__list:focus-within::-webkit-scrollbar-thumb,
 .mu-rel__list:hover::-webkit-scrollbar-thumb, .mu-rel__list:focus-within::-webkit-scrollbar-thumb,
 .mu-stats__list:hover::-webkit-scrollbar-thumb, .mu-stats__list:focus-within::-webkit-scrollbar-thumb,
+.mu-holdings__scroll:hover::-webkit-scrollbar-thumb, .mu-holdings__scroll:focus-within::-webkit-scrollbar-thumb,
 .mu-memo:hover::-webkit-scrollbar-thumb, .mu-memo:focus-within::-webkit-scrollbar-thumb,
 .mu-prose pre:hover::-webkit-scrollbar-thumb { background: var(--line-strong); background-clip: padding-box; }
 /* darker when pointing right at the thumb */
 .mu-chat__stream::-webkit-scrollbar-thumb:hover,
 .mu-news__list::-webkit-scrollbar-thumb:hover, .mu-rel__list::-webkit-scrollbar-thumb:hover,
-.mu-stats__list::-webkit-scrollbar-thumb:hover, .mu-memo::-webkit-scrollbar-thumb:hover,
+.mu-stats__list::-webkit-scrollbar-thumb:hover, .mu-holdings__scroll::-webkit-scrollbar-thumb:hover, .mu-memo::-webkit-scrollbar-thumb:hover,
 .mu-prose pre::-webkit-scrollbar-thumb:hover { background: var(--muted); background-clip: padding-box; }
 
 /* the canvas scrolls but shows no scrollbar at all (cards are the scrollers). */

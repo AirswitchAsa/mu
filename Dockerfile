@@ -32,18 +32,34 @@ RUN pnpm build
 # Build the SPA same-origin: empty VITE_MU_API → the client calls a relative `/api`, so the
 # server can serve it off its own origin with no CORS (see packages/web/src/lib/api.ts).
 RUN VITE_MU_API= pnpm build:web
+# Slim the workspace to what the RUNTIME actually loads, BEFORE the runtime copies it.
+# Wipe node_modules and do a CLEAN prod install: this rebuilds the pnpm store
+# (node_modules/.pnpm) with ONLY `dependencies` — dropping tsc/vite/vitest/eslint/esbuild/
+# @types/* etc. — AND re-links the `@mu/*` workspace packages from the lockfile. (A plain
+# `pnpm install --prod` leaves the dev-dep files orphaned in the store so disk never shrinks;
+# `pnpm prune --prod` shrinks but strips the workspace links. A clean reinstall does both.)
+# The full install above populated pnpm's content-addressable store (outside /app), so this
+# reinstall hardlinks from it. The web package's node_modules go entirely — the SPA is prebuilt
+# into packages/web/dist as bundled static assets (MU_WEB_DIR), never imported at runtime.
+RUN rm -rf node_modules packages/*/node_modules resources/*/node_modules \
+ && pnpm install --prod \
+ && rm -rf packages/web/node_modules \
+ && find . -name '*.tsbuildinfo' -delete
 
 # ---- runtime: slim image with the opencode binary + the built workspace ------------------
 FROM ${NODE_IMAGE} AS runtime
 ARG OPENCODE_VERSION
 ENV NODE_ENV=production
 # The opencode CLI binary on PATH (the SDK launches `opencode serve` via cross-spawn). The
-# npm package resolves the right prebuilt platform binary from its optionalDependencies.
-RUN npm i -g opencode-ai@${OPENCODE_VERSION} && npm cache clean --force
+# npm package resolves the right prebuilt platform binary from its optionalDependencies — but
+# it also pulls the redundant `*-musl` variant (~135 MB); this is a glibc base, so drop it.
+RUN npm i -g opencode-ai@${OPENCODE_VERSION} && npm cache clean --force \
+ && rm -rf /usr/local/lib/node_modules/opencode-ai/node_modules/*-musl
 WORKDIR /app
-# Bring the fully-built, fully-installed workspace over. pnpm's virtual store
-# (node_modules/.pnpm) holds the real files, so /app is self-contained — the resources'
-# runtime deps (e.g. yahoo-finance2), loaded by dynamic import at request time, come along.
+# Bring the built, prod-pruned workspace over. pnpm's virtual store (node_modules/.pnpm)
+# holds the real files, so /app is self-contained — the resources' runtime deps (e.g.
+# yahoo-finance2), loaded by dynamic import at request time, are `dependencies` so they
+# survive the prune and come along; only devDependencies were dropped.
 COPY --from=builder /app /app
 
 # One process serves web + API on $PORT; one /data volume holds ALL state. opencode's config

@@ -23,6 +23,14 @@ export interface ResourceManifest {
   readonly id: string;
   /** the shape id(s) this resource can supply. */
   readonly shapes: readonly string[];
+  /**
+   * Shapes this resource produces but must NEVER be auto-selected for when the agent
+   * omits a `source` — reachable for them only by naming the source explicitly. For an
+   * account-scoped source (e.g. a broker emitting `ohlcv`/`key_stats` about the user's
+   * portfolio, not an arbitrary ticker) this keeps a plain `data_fetch {shape:'ohlcv',
+   * entity:'AAPL'}` routing to the general-purpose producer (Yahoo/Finnhub) instead.
+   */
+  readonly explicitOnlyShapes?: readonly string[];
   readonly params: readonly ResourceParam[];
   /** names of required config keys (e.g. `apiKey`); values stay server-side. */
   readonly configSchema?: readonly string[];

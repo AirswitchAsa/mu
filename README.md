@@ -2,8 +2,9 @@
 
 **A generative-UI playground for financial research.** You bring an agent and your
 data; µ turns the agent's validated tool calls into a live canvas of typed
-cards — price charts, comparisons, news, release calendars, key stats — sitting
-beside the conversation that produced them.
+cards — price charts, comparisons, news, release calendars, key stats, options
+boards, and your own brokerage portfolio — sitting beside the conversation that
+produced them.
 
 <img width="1474" alt="µ — a generative-UI research canvas" src="https://github.com/user-attachments/assets/ce80b491-06f0-4950-8002-e68147a2dcde" />
 
@@ -30,6 +31,8 @@ a provider*, so any source that produces a shape just works. The card is chosen 
 | News wire | `news` | headlines / catalysts (aggregated, labeled) | Yahoo, CNBC, Finnhub |
 | Release calendar | `releases` | expected vs actual, by date (bitemporal) | Finnhub earnings, FRED macro |
 | Key statistics | `key_stats` | what a company *is* right now | Finnhub |
+| Options chain | `options_chain` | calls │ strike │ puts ladder · IV smile · term structure | ORATS |
+| Portfolio | `positions` | your brokerage holdings · balances · equity curve | Alpaca |
 | Memo | — | agent-authored prose | — |
 
 A global **refresh** re-pulls bound data on demand; releases and key-stats are
@@ -50,7 +53,8 @@ pnpm dev:web                              # → http://localhost:5173
 
 µ works with **no API keys** (Yahoo/CNBC RSS for prices + news). Keys unlock more
 sources — copy [`.env.example`](.env.example) to `.env` and fill in what you want
-(`FINNHUB_API_KEY`, `FRED_API_KEY`). The agent is enabled by two values: `MU_MODEL`
+(`FINNHUB_API_KEY`, `FRED_API_KEY`, `ORATS_API_KEY` for options, Alpaca keys for your
+portfolio). The agent is enabled by two values: `MU_MODEL`
 (a `provider/model`) and that provider's key (`<PROVIDER>_API_KEY`, e.g.
 `DEEPSEEK_API_KEY`); µ supervises a headless [opencode](https://github.com/sst/opencode)
 to drive it. Omit `MU_MODEL` to run **API-only** (no agent).
@@ -58,7 +62,16 @@ to drive it. Omit `MU_MODEL` to run **API-only** (no agent).
 ## Run with Docker
 
 A **self-contained published image** runs the whole thing — web + API + the agent — in one
-container on one port. You only bring a model key:
+container on one port. You only bring a model key.
+
+**Easiest — Docker Compose:**
+
+```bash
+cp .env.example .env      # then edit .env: set MU_MODEL + your provider key
+docker compose up         # → http://localhost:4000
+```
+
+**Or a one-off `docker run`:**
 
 ```bash
 docker run --rm -p 4000:4000 -v mu-data:/data \
@@ -67,7 +80,7 @@ docker run --rm -p 4000:4000 -v mu-data:/data \
   docker.io/spicadust/mu:latest
 ```
 
-Then open **http://localhost:4000**. Unlike dev (where Vite serves the web on `:5173`
+Open **http://localhost:4000**. Unlike dev (where Vite serves the web on `:5173`
 separately), the image serves the web *same-origin* from the API server — one port, no CORS.
 The `/data` volume persists the store, sessions, and the agent's own storage across restarts.
 
@@ -89,7 +102,7 @@ packages/
   opencode-plugin   the agent binding (the one opencode-coupled package)
   server            HTTP + SSE composition root
   web               the React/Vite client (its own build)
-resources/          first-party data sources (yahoo-finance, rss-news, finnhub, fred)
+resources/          first-party data sources (yahoo-finance, rss-news, finnhub, fred, orats, alpaca)
 ```
 
 ## Testing

@@ -18,4 +18,5 @@
 **/.DS_Store
 Dockerfile
 .dockerignore
+compose*.yml
 docker-compose*.yml

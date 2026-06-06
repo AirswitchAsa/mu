@@ -11,6 +11,15 @@ time — **nothing secret is baked into the image**.
 
 ## Run
 
+**Compose — one command.** Copy [`.env.example`](.env.example) to `.env`, set `MU_MODEL` + your
+provider key, then (from a checkout, or any dir holding the [`compose.yml`](compose.yml)):
+
+```bash
+docker compose up        # add -d to run detached
+```
+
+**Plain `docker run`:**
+
 ```bash
 docker run --rm -p 4000:4000 -v mu-data:/data \
   -e MU_MODEL=deepseek/deepseek-v4-pro \
@@ -18,9 +27,7 @@ docker run --rm -p 4000:4000 -v mu-data:/data \
   docker.io/spicadust/mu:latest
 ```
 
-Open **http://localhost:4000**.
-
-Or with an env file (e.g. a `.env` holding your keys — see [`.env.example`](.env.example)):
+Either way, open **http://localhost:4000**. To pass your keys from a file instead of `-e` flags:
 
 ```bash
 docker run --rm -p 4000:4000 -v mu-data:/data --env-file .env docker.io/spicadust/mu:latest
@@ -49,6 +56,9 @@ else has a sensible default baked into the image.
 | `<PROVIDER>_API_KEY` | — | The model provider's key. By convention `DEEPSEEK_API_KEY` for `deepseek/…`, `OPENAI_API_KEY` for `openai/…`, etc. If `MU_MODEL` is set but its key is missing, the container **fails fast at boot** with a clear message. |
 | `FINNHUB_API_KEY` | — | Unlocks Finnhub (company news, earnings, key stats) |
 | `FRED_API_KEY` | — | Unlocks FRED (US macro releases) |
+| `ORATS_API_KEY` | — | Unlocks ORATS (options chain — smile / skew / term structure) |
+| `ALPACA_API_KEY_ID` + `ALPACA_API_SECRET` | — | Your Alpaca account (read-only portfolio — holdings, balances, equity curve). Use a **paper** account for a safe demo. |
+| `ALPACA_BASE_URL` | `https://paper-api.alpaca.markets` | Alpaca endpoint; set to `https://api.alpaca.markets` for a live account |
 | `PORT` | `4000` | Port the server listens on (web + API) |
 | `HOST` | `0.0.0.0` | Bind address inside the container |
 | `MU_DATA_ROOT` | `/data` | Root of **all** persistent state (point a volume here) |
@@ -108,8 +118,10 @@ docker run --rm -p 4000:4000 -v mu-data:/data --env-file .env mu
 ```
 
 The build is multi-stage: a builder runs `pnpm install` + `tsc --build` + the Vite web build
-(same-origin), and the runtime stage is a slim Node image with the pinned `opencode` CLI plus
-the built workspace. Pin a different agent CLI with `--build-arg OPENCODE_VERSION=1.15.11`.
+(same-origin), then slims the workspace to its **production** closure (a clean `pnpm install
+--prod` — dropping the TS/Vite/Vitest toolchain) before the runtime stage copies it onto a slim
+Node image with the pinned `opencode` CLI (its redundant `*-musl` binary removed). Pin a
+different agent CLI with `--build-arg OPENCODE_VERSION=1.15.11`.
 
 Multi-arch: the build resolves the right `opencode` binary by architecture automatically, so it
 works on both `linux/amd64` and `linux/arm64`. To build for another arch:

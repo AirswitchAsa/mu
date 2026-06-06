@@ -19,6 +19,9 @@ import type { SessionStore } from "./session-store.js";
 export interface CanvasChange {
   readonly op: CanvasOp;
   readonly summary: CanvasSummary;
+  /** who made the edit — `agent` ops drive the chat timeline + "thinking"; `user`
+   *  layout ops (resize/reorder/delete) only sync the canvas, never the agent. */
+  readonly source: Emitter;
 }
 export type CanvasChangeListener = (sessionId: string, change: CanvasChange) => void;
 
@@ -110,7 +113,7 @@ export class ToolSurface {
     this.deps.sessions.replace(next);
     const summary = buildCanvasSummary(next);
     const createdWindowIds = next.windows.filter((w) => !before.has(w.id)).map((w) => w.id);
-    for (const op of ops) this.deps.onCanvasChange?.(sessionId, { op, summary });
+    for (const op of ops) this.deps.onCanvasChange?.(sessionId, { op, summary, source: emitter });
     return { summary, createdWindowIds };
   }
 

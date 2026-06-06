@@ -16,8 +16,8 @@ The shape id is the lingua franca: `#Resource`s declare the shape they produce,
 `#Renderer`s declare the shape they require (`&RendererManifest`), and validation
 at `!ingest` *is* the "data fits the chart" guarantee. The v0 catalogue
 (built: `ohlcv` series, `news` event-list, `releases` point-in-time, `key_stats`
-+ `options_chain` cross-section; deferred: `metric`) lives in shapes.md; new shapes
-are minted on demand (dashboard-first).
++ `options_chain` + `positions` cross-section; deferred: `metric`) lives in
+shapes.md; new shapes are minted on demand (dashboard-first).
 
 ## State
 

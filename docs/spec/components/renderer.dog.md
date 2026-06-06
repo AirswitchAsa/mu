@@ -12,8 +12,10 @@ data), and draws. The v0 set (registered as core in `@mu/server`): **`price_char
 **`compare`** (index-normalized multi-instrument lines), **`memo`** (safe
 markdown, no data binding), **`news`** (a scrolling wire feed), **`releases`**
 (a point-in-time release calendar — a vintage timeline), **`grid`** (a generic
-cross-sectional data table), and **`curve`** (a generic xy line over a **non-time**
-numeric axis). The two cross-sectional primitives are described below.
+cross-sectional data table), **`curve`** (a generic xy line over a **non-time**
+numeric axis), and **`positions`** (a brokerage-holdings table). The two
+cross-sectional primitives are described below; `positions` and the portfolio
+read plane are described in *Portfolio*.
 
 ### Grid + Curve — the cross-sectional primitives
 
@@ -98,6 +100,29 @@ each handle server-side (`!resolve`), and the card draws the rows. The manifests
   forecasts before a release, push a "handle changed" nudge over the existing SSE —
   *not* websockets) is the deferred next step; true moving-tick real-time is out of
   scope (this app's grain is minutes, not seconds).
+
+### Portfolio — a personal account on the data plane
+
+The brokerage portfolio is **three cards over one resource**, and only one is new:
+
+- **`positions`** (new primitive) — a holdings table over a bound `positions` handle
+  (`alpaca:positions:PORTFOLIO`): symbol · qty · avg cost · last · market value · open
+  P/L ($ and %) · day %, P/L-colored, with a totals row. A `cross-section` like
+  `key_stats` (idKey `symbol`), so a refresh re-snapshots and a closed position drops out.
+- **balances** reuse the existing **`key_stats`** panel — the Alpaca resource emits the
+  account (equity, cash, buying power, day P/L) *as `key_stats` records*
+  (`alpaca:key_stats:PORTFOLIO`), so the panel renders them unchanged.
+- the **equity curve** reuses **`compare`** — the resource emits
+  `/v2/account/portfolio/history` *as `ohlcv`* (`close = equity`,
+  `alpaca:ohlcv:PORTFOLIO`); a single-handle `compare` card draws it as an
+  index-normalized return line.
+
+This is the **read/data plane**: account state flows resource → broker → handle →
+card and **refreshes server-side without the agent** (the bulk-guard — display must
+not round-trip the LLM). Credentials are per-user, held server-side; single-operator
+v0 is one account per deployment. *Controlling* the account (placing orders) is a
+separate **MCP control plane** the agent drives directly — deliberately deferred and
+not load-bearing here.
 
 ## State
 

@@ -14,6 +14,9 @@ const GROUP_LABEL: Record<string, string> = {
   profile: "Profile",
   valuation: "Valuation",
   trading: "Trading",
+  // brokerage account (alpaca:key_stats) — balances panel groups
+  balances: "Balances",
+  performance: "Performance",
 };
 
 /** Stable, ordered list of the groups present (latestSnapshot already sorts rows). */

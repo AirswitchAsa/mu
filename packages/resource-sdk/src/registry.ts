@@ -82,7 +82,17 @@ export class ResourceRegistry {
     if (candidates.length === 0) {
       throw new MuErrorException("UNKNOWN_SOURCE", `no resource produces shape '${shape}'`);
     }
-    const available = candidates.find((r) => this.availabilityOf(r) === "available");
+    // Skip account-scoped producers that opted out of being the unspecified default for
+    // this shape (e.g. a broker's `ohlcv`/`key_stats` is about the user's portfolio, not
+    // an arbitrary ticker) — they remain reachable by naming the source explicitly above.
+    const eligible = candidates.filter((r) => !r.manifest.explicitOnlyShapes?.includes(shape));
+    if (eligible.length === 0) {
+      throw new MuErrorException(
+        "UNKNOWN_SOURCE",
+        `shape '${shape}' is produced only by account-scoped source(s) — name one explicitly (e.g. {source:'alpaca'})`,
+      );
+    }
+    const available = eligible.find((r) => this.availabilityOf(r) === "available");
     if (!available) {
       throw new MuErrorException(
         "NOT_CONFIGURED",

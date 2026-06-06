@@ -180,9 +180,15 @@ export function App(): JSX.Element {
         }
         return;
       case "canvas":
-        applyTimelineEvent(tl, e);
+        // Always sync the server-authoritative canvas (so a layout edit on another device
+        // lands here too). But a `user` layout op (resize/reorder/delete) echoes on this
+        // same stream — it must NOT touch the agent timeline or flip "thinking" on, or a
+        // resize looks like the agent started a turn. Only agent ops drive the trace.
         applyManifest(id, e.state);
-        setView(id, (v) => ({ ...v, pending: [...tl.items], thinking: true }));
+        if (e.source !== "user") {
+          applyTimelineEvent(tl, e);
+          setView(id, (v) => ({ ...v, pending: [...tl.items], thinking: true }));
+        }
         return;
       case "tool":
       case "chat_delta":
