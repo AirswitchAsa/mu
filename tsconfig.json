@@ -10,6 +10,7 @@
     { "path": "resources/yahoo-finance" },
     { "path": "resources/rss-news" },
     { "path": "resources/finnhub" },
-    { "path": "resources/fred" }
+    { "path": "resources/fred" },
+    { "path": "resources/orats" }
   ]
 }

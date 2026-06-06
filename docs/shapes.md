@@ -54,19 +54,34 @@ macro levels, and simple single-number fundamentals — they differ by *identity
 
 ---
 
-## `options_chain` — options snapshot
+## `options_chain` — options snapshot (cross-section) *(built)*
 
-- **window:** options table / vol surface
-- **kind:** `cross-section`
-- **record (one row):**
-  `{ expiry, strike, right /* call|put */, bid, ask, last, iv, delta, gamma, theta, vega, openInterest, volume }`
-- **identity:** `provider : options_chain : entity : asOf` — e.g.
-  `orats:options_chain:AMZN:2026-06-03`
-- **query params:** optional expiry/strike filters (the snapshot is stored whole regardless)
-- **merge:** keyed by **as-of** — re-fetching an as-of overwrites that snapshot; new as-ofs are
-  added. No within-snapshot merge.
-- **storage:** one parquet per as-of snapshot (the directory of snapshots *is* the surface
-  history)
+- **window:** `grid` (calls │ strike │ puts ladder) + `curve` (IV smile / skew, term structure)
+- **kind:** `cross-section` (accumulating snapshot — the `key_stats` pattern)
+- **record (one row = one *side* of one strike):**
+  `{ id, expiry, strike, right /* call|put */, bid, ask, mid, iv, smv, delta, gamma, theta, vega, open_interest, volume, underlying, dte, as_of }`
+  - `right` splits each provider strike-row (which carries *both* sides) into a `call` row and a
+    `put` row — so a renderer filters by `right` rather than de-interleaving columns.
+  - `iv` is the market **mid** IV (0 when that side has no two-sided market); `smv` is the
+    provider's **smoothed/fitted** strike vol — the clean input for a smile curve.
+  - `underlying` is the spot at snapshot, `dte` days-to-expiry, `as_of` the vintage (epoch-ms).
+  - `id` = `"{expiry}|{strike}|{right}"` — the within-snapshot row identity (the merge `idKey`).
+- **identity:** `provider : options_chain : entity` — e.g. `orats:options_chain:AMZN`. **`as_of` is a
+  column, not in the handle** (vintages accumulate under one *stable* handle, exactly like
+  `key_stats`).
+  - *Refinement over the provisional v0 sketch (which put `asOf` in the handle): a stable handle is
+    what lets a global **refresh** re-snapshot the same chain. An as-of in the handle would pin
+    refresh to a past date and never advance the surface.*
+- **query params:** `entity` (`asOf` cutoff on the read side). Expiry/strike narrowing is a renderer
+  concern — the snapshot is fetched and stored whole.
+- **merge key:** `(as_of, id)` — re-snapshotting a vintage upserts its rows; a new `as_of` adds a
+  vintage; the card shows the newest `as_of`.
+- **storage:** year-partitioned parquet (by `as_of`), every vintage kept — the directory of vintages
+  *is* the surface history.
+- **what belongs here:** a point-in-time options surface — strikes × expiries × {call,put} with
+  greeks / IV / OI / volume. Source: **ORATS** (`/datav2/strikes`, one snapshot per fetch). Derived
+  **smile/skew** (IV vs strike, one expiry) and **term structure** (ATM IV vs expiry) are
+  *projections / reductions of this one shape*, drawn by the `curve` card — **not** separate shapes.
 
 ---
 
@@ -142,17 +157,24 @@ renderer's `description` for `renderer_list`):
 | `news` | `news` | "what's being said / catalysts?" | yahoo, cnbc, finnhub |
 | `releases` | `releases` | "what's expected vs what printed, by date?" | finnhub (earnings), fred (macro) |
 | `key_stats` | `key_stats` | "what *is* this company right now?" | finnhub |
+| `grid` | `options_chain` (and other cross-sections) | "the full options board — calls │ strike │ puts" | orats |
+| `curve` | `options_chain` (projection) | "IV smile / skew · term structure" | orats |
 | `memo` | — | agent-authored prose, no data | — |
 
 **Routing rule:** a fact with a *release date and an expected/actual* → `releases`; a
 *continuously-moving or static descriptive* fact → `key_stats`; a *time path you want to chart* →
-`series` (ohlcv today). This is what keeps P/E out of the calendar and EPS out of the stats panel.
+`series` (ohlcv today); a *cross-sectional table* (an options board, a stats matrix) → `grid`; a
+*cross-sectional curve* (a smile, a term structure, a yield curve) → `curve`. This is what keeps P/E
+out of the calendar and EPS out of the stats panel.
+
+> **Options scalars** (ATM IV, 25Δ skew, IV rank) are *static point-in-time numbers*, so they ride
+> the existing `key_stats` panel — no new primitive. IV rank additionally needs an IV history, so it
+> is a fast-follow once a `metric`/vintage history exists.
 
 ## Deferred (not v0)
 
 - **`metric`** (single-value numeric `series` — IV rank, realized vol, macro levels charted over
   time) — minted when an indicator chart needs it; until then macro actuals ride on `releases`.
-- **`options_chain`** (the whole-table-per-`as_of` `cross-section` variant) — strikes × expiries ×
-  greeks, fetched and written whole; needs ORATS.
-- **Panel** (`cross-section` over time as one addressable object, e.g. the term structure) — for
-  now history is assembled by globbing vintages.
+- **Panel** (`cross-section` over time as one addressable object, e.g. an *intraday* term-structure
+  history) — for now a term structure is reduced from the latest `options_chain` snapshot by the
+  `curve` card, and longer history is assembled by globbing `as_of` vintages.

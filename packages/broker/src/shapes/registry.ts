@@ -3,16 +3,18 @@ import { ohlcvShape } from "./ohlcv.js";
 import { newsShape } from "./news.js";
 import { releasesShape } from "./releases.js";
 import { keyStatsShape } from "./key-stats.js";
+import { optionsChainShape } from "./options-chain.js";
 
 /**
  * The core shapes the broker ships with: ohlcv (series), news (event-list),
- * releases (point-in-time), key_stats (cross-section).
+ * releases (point-in-time), key_stats + options_chain (cross-section).
  */
 export const CORE_SHAPES: readonly Shape[] = [
   ohlcvShape as Shape,
   newsShape as Shape,
   releasesShape as Shape,
   keyStatsShape as Shape,
+  optionsChainShape as Shape,
 ];
 
 /**

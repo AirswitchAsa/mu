@@ -126,6 +126,15 @@ importers:
         specifier: workspace:*
         version: link:../../packages/resource-sdk
 
+  resources/orats:
+    dependencies:
+      '@mu/protocol':
+        specifier: workspace:*
+        version: link:../../packages/protocol
+      '@mu/resource-sdk':
+        specifier: workspace:*
+        version: link:../../packages/resource-sdk
+
   resources/rss-news:
     dependencies:
       '@mu/protocol':

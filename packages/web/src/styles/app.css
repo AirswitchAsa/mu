@@ -576,3 +576,54 @@ body.mu-is-dragging { cursor: grabbing; user-select: none; }
 
 /* hide TradingView attribution defensively (also disabled via chart option) */
 #tv-attr-logo, a[title*="TradingView"] { display: none !important; }
+
+/* ── grid renderer (options_chain ladder) ─────────────────────────────────── */
+.mu-datagrid { position: absolute; inset: 0; display: flex; flex-direction: column; }
+.mu-datagrid__tabs {
+  flex: 0 0 auto; display: flex; gap: 4px; overflow-x: auto; padding: 6px 10px;
+  border-bottom: 1px solid var(--line); scrollbar-width: none;
+}
+.mu-datagrid__tabs::-webkit-scrollbar { height: 0; }
+.mu-datagrid__tab {
+  flex: 0 0 auto; cursor: pointer; border: 1px solid var(--line); background: var(--paper);
+  color: var(--muted); font-family: var(--ds-font-mono); font-size: 10.5px; letter-spacing: 0.02em;
+  padding: 3px 9px; border-radius: var(--ds-radius-pill); white-space: nowrap;
+  transition: all var(--ds-motion-base) var(--ds-ease-standard);
+}
+.mu-datagrid__tab:hover { color: var(--ink); border-color: var(--line-strong); }
+.mu-datagrid__tab[data-active="true"] { background: var(--ink); border-color: var(--ink); color: var(--paper); }
+.mu-datagrid__scroll { flex: 1 1 auto; overflow: auto; min-height: 0; }
+.mu-datagrid__empty { color: var(--muted); font-family: var(--ds-font-mono); font-size: 12px; text-align: center; padding: 24px; }
+.mu-datagrid__table { width: 100%; border-collapse: collapse; font-family: var(--ds-font-mono); font-size: 11px; }
+.mu-datagrid__table thead th {
+  position: sticky; top: 0; z-index: 1; background: var(--paper); color: var(--muted);
+  font-weight: 500; letter-spacing: 0.03em; padding: 4px 6px; border-bottom: 1px solid var(--line-strong);
+}
+.mu-dg__h--side { text-align: center; color: var(--ink-soft); text-transform: uppercase; font-size: 9.5px; }
+.mu-dg__h--strike { text-align: center; }
+.mu-datagrid__grouprow th { padding-top: 6px; }
+.mu-dg__c { padding: 2px 6px; text-align: right; color: var(--ink); white-space: nowrap; }
+.mu-dg__c--soft { color: var(--muted); }
+.mu-dg__c--strike {
+  text-align: center; font-weight: 600; color: var(--ink); background: var(--paper-soft);
+  border-left: 1px solid var(--line); border-right: 1px solid var(--line);
+}
+.mu-datagrid__row:hover .mu-dg__c { background: var(--mu-hover); }
+.mu-datagrid__row[data-atm="true"] .mu-dg__c { background: color-mix(in srgb, var(--action) 12%, transparent); }
+.mu-datagrid__row[data-atm="true"] .mu-dg__c--strike { background: var(--action); color: var(--paper); }
+
+/* ── curve renderer (smile / term structure) ──────────────────────────────── */
+.mu-curve { position: absolute; inset: 0; }
+.mu-curve__svg { width: 100%; height: 100%; display: block; }
+.mu-curve__legend {
+  position: absolute; top: 8px; right: 10px; display: flex; flex-direction: column; gap: 3px;
+  pointer-events: none;
+}
+.mu-curve__legend-row { display: flex; align-items: center; gap: 6px; }
+.mu-curve__legend-dot { width: 9px; height: 9px; border-radius: 2px; flex: 0 0 auto; }
+.mu-curve__legend-label { font-family: var(--ds-font-mono); font-size: 10.5px; color: var(--muted); }
+.mu-curve__tip {
+  position: absolute; top: 6px; padding: 2px 7px; border-radius: var(--ds-radius-sm);
+  background: var(--ink); color: var(--paper); font-family: var(--ds-font-mono); font-size: 10.5px;
+  white-space: nowrap; pointer-events: none; transform: translateX(-50%);
+}
